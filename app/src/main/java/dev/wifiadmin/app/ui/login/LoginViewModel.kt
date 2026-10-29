@@ -1,0 +1,123 @@
+package dev.wifiadmin.app.ui.login
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.wifiadmin.app.data.RouterAddressResolver
+import dev.wifiadmin.app.data.RouterRepository
+import dev.wifiadmin.app.data.RouterUnavailableException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/** What happened on the last connection attempt. */
+sealed class LoginResult {
+    data object None : LoginResult()
+    data object Success : LoginResult()
+    data object InvalidCredentials : LoginResult()
+    data object NetworkError : LoginResult()
+    data object UnexpectedResponse : LoginResult()
+
+    /** The router refuses logins for a while after too many failures. */
+    data class Cooldown(val retryAfterSeconds: Int?) : LoginResult()
+}
+
+/**
+ * The address used when the gateway of the current Wi-Fi network cannot be
+ * read. It is the factory default of this router, and only a last resort.
+ */
+const val FALLBACK_HOST = "192.168.1.1"
+
+/** The state of the login form. */
+data class LoginUiState(
+    /**
+     * The address used for the connection.
+     *
+     * It is **not** editable: it comes from the current Wi-Fi network. The
+     * default is only a fallback for when the gateway cannot be read, so that
+     * a connection attempt is still possible.
+     */
+    val host: String = FALLBACK_HOST,
+    val username: String = "admin",
+    val isConnecting: Boolean = false,
+    /** True when [host] was read from the current Wi-Fi network. */
+    val hostWasDetected: Boolean = false,
+    val result: LoginResult = LoginResult.None
+)
+
+/**
+ * Drives the connection screen.
+ *
+ * The password lives in the composable's local state and is handed straight
+ * to [connect]; it is never part of [LoginUiState] and therefore never
+ * persisted, logged or restored.
+ */
+class LoginViewModel(
+    private val repository: RouterRepository,
+    private val addressResolver: RouterAddressResolver? = null
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(LoginUiState())
+    val state: StateFlow<LoginUiState> = _state.asStateFlow()
+
+    private val _result = MutableStateFlow<LoginResult>(LoginResult.None)
+    val result: StateFlow<LoginResult> = _result.asStateFlow()
+
+    init {
+        observeRouterAddress()
+    }
+
+    /**
+     * Reads the address from the gateway of the current Wi-Fi network.
+     *
+     * The address is not editable: the user connects to the router of the
+     * network the phone is on. When the gateway cannot be read, [LoginUiState.host]
+     * keeps its fallback value and the screen says the address was not detected.
+     */
+    private fun observeRouterAddress() {
+        val resolver = addressResolver ?: return
+        viewModelScope.launch {
+            resolver.observeSuggestedAddress().collect { suggestion ->
+                if (suggestion.isNullOrBlank()) {
+                    _state.value = _state.value.copy(hostWasDetected = false)
+                    return@collect
+                }
+                _state.value = _state.value.copy(
+                    host = suggestion,
+                    hostWasDetected = true
+                )
+            }
+        }
+    }
+
+    fun onUsernameChanged(username: String) {
+        _state.value = _state.value.copy(username = username)
+    }
+
+    /** Opens the session and reports the outcome. */
+    fun connect(host: String, username: String, password: String) {
+        if (_state.value.isConnecting) return
+
+        _state.value = _state.value.copy(
+            host = host,
+            username = username,
+            isConnecting = true
+        )
+        _result.value = LoginResult.None
+
+        viewModelScope.launch(repository.networkDispatcher) {
+            val accepted = repository.connect(host, username, password)
+            val error = repository.state.value.error
+            _state.value = _state.value.copy(isConnecting = false)
+            _result.value = when {
+                accepted -> LoginResult.Success
+                error is RouterUnavailableException.Unreachable -> LoginResult.NetworkError
+                error is RouterUnavailableException.UnexpectedResponse ->
+                    LoginResult.UnexpectedResponse
+                error is RouterUnavailableException.Cooldown ->
+                    LoginResult.Cooldown(error.retryAfterSeconds)
+                else -> LoginResult.InvalidCredentials
+            }
+        }
+    }
+}

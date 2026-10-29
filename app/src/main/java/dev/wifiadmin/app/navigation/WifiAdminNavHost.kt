@@ -1,0 +1,141 @@
+package dev.wifiadmin.app.navigation
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import dev.wifiadmin.app.AppContainer
+import dev.wifiadmin.app.ui.dashboard.DashboardScreen
+import dev.wifiadmin.app.ui.dashboard.DashboardViewModel
+import dev.wifiadmin.app.ui.devices.DevicesScreen
+import dev.wifiadmin.app.ui.devices.DevicesViewModel
+import dev.wifiadmin.app.ui.login.LoginScreen
+import dev.wifiadmin.app.ui.login.LoginViewModel
+import dev.wifiadmin.app.ui.settings.SettingsScreen
+import dev.wifiadmin.app.ui.settings.SettingsViewModel
+
+/** The screens of the application. */
+sealed class Route(val path: String) {
+    data object Login : Route("login")
+    data object Dashboard : Route("dashboard")
+    data object Devices : Route("devices")
+    data object Settings : Route("settings")
+}
+
+/** The entries of the bottom navigation bar. */
+private enum class Tab(
+    val route: Route,
+    val label: String,
+    val icon: ImageVector
+) {
+    DASHBOARD(Route.Dashboard, "Tableau de bord", Icons.Default.Dashboard),
+    DEVICES(Route.Devices, "Appareils", Icons.Default.Devices),
+    SETTINGS(Route.Settings, "Réglages", Icons.Default.Settings)
+}
+
+/**
+ * The navigation graph.
+ *
+ * The dashboard, the device list and the settings share one bottom bar. The
+ * login screen has none.
+ */
+@Composable
+fun WifiAdminNavHost(
+    container: AppContainer,
+    appVersionName: String,
+    modifier: Modifier = Modifier
+) {
+    val navController = rememberNavController()
+    val viewModelFactory = remember(container) { WifiAdminViewModelFactory(container) }
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = backStackEntry?.destination
+
+    val showBottomBar = Tab.entries.any { tab ->
+        currentDestination?.hierarchy?.any { it.route == tab.route.path } == true
+    }
+
+    Scaffold(
+        modifier = modifier,
+        bottomBar = {
+            if (showBottomBar) {
+                NavigationBar {
+                    Tab.entries.forEach { tab ->
+                        val selected = currentDestination?.hierarchy
+                            ?.any { it.route == tab.route.path } == true
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                navController.navigate(tab.route.path) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(tab.icon, contentDescription = null) },
+                            label = { Text(tab.label) }
+                        )
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = Route.Login.path,
+            modifier = Modifier.padding(innerPadding)
+        ) {
+            composable(Route.Login.path) {
+                val viewModel: LoginViewModel = viewModel(factory = viewModelFactory)
+                LoginScreen(
+                    viewModel = viewModel,
+                    onConnected = {
+                        navController.navigate(Route.Dashboard.path) {
+                            popUpTo(Route.Login.path) { inclusive = true }
+                        }
+                    }
+                )
+            }
+            composable(Route.Dashboard.path) {
+                val viewModel: DashboardViewModel = viewModel(factory = viewModelFactory)
+                DashboardScreen(viewModel = viewModel)
+            }
+            composable(Route.Devices.path) {
+                val viewModel: DevicesViewModel = viewModel(factory = viewModelFactory)
+                DevicesScreen(viewModel = viewModel)
+            }
+            composable(Route.Settings.path) {
+                val viewModel: SettingsViewModel = viewModel(factory = viewModelFactory)
+                SettingsScreen(
+                    viewModel = viewModel,
+                    appVersionName = appVersionName,
+                    routerDisplayName = container.routerRepository.routerDisplayName,
+                    onDisconnected = {
+                        navController.navigate(Route.Login.path) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
