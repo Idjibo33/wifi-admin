@@ -338,7 +338,7 @@ toucher au protocole.
 
 | Sujet | État |
 |---|---|
-| Étude du filtrage **pare-feu** (`cmd 23`) en lecture seule | Non commencée. C'est la piste pour restreindre Internet. |
+| Filtrage **pare-feu** (`cmd 23`) | **`UNAVAILABLE` sur ce firmware** (clôture du 30/10/2026). L'interface officielle reçoit la même réponse creuse que nous. Aucune intégration ne sera faite. Voir `FIREWALL_ANALYSIS.md` §13ter. |
 | Persistance du mot de passe via Keystore | Non implémentée — volontairement absente pour l'instant. |
 | Support d'autres routeurs | L'architecture est prête (interface `RouterAdapter`), mais aucun second adaptateur n'existe. |
-| Interface Compose | **Hors périmètre de ce MVP** : pas encore de bouton de blocage, parce que la capacité n'est pas validée. |
+| Interface Compose | **Hors périmètre** : aucun bouton de blocage, la capacité n'existe pas sur ce firmware. |

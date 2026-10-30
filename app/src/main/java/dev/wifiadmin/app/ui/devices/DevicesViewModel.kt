@@ -48,7 +48,14 @@ data class DevicesUiState(
     /** When the last successful poll happened, in epoch milliseconds. */
     val lastRefreshMillis: Long? = null,
     /** The message of the last failure, or null. */
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /**
+     * True when the router delivered **no** device list at all.
+     *
+     * The screen must not claim that no device is connected in that case:
+     * nothing was received, which is not the same thing as an empty network.
+     */
+    val payloadAbsent: Boolean = false
 ) {
 
     /** True when the screen has nothing to show but a spinner. */
@@ -137,6 +144,7 @@ class DevicesViewModel(
                         isLoading = false,
                         devices = snapshot.devices,
                         lastRefreshMillis = snapshot.capturedAtMillis,
+                        payloadAbsent = snapshot.payloadAbsent,
                         errorMessage = null
                     )
                 }

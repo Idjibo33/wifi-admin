@@ -23,3 +23,4 @@ local.properties
 *.jks
 
 # Gradle wrapper checksum is intentionally kept in gradle/wrapper/.
+__pycache__/

@@ -57,6 +57,15 @@ data class RouterDevice(
 data class DeviceSnapshot(
     val devices: List<RouterDevice>,
     val capturedAtMillis: Long = System.currentTimeMillis(),
+    /**
+     * True when the router delivered **no** device list at all.
+     *
+     * An absent payload is not an empty network: it means the router
+     * answered without the data. The two must never be confused — in
+     * particular, a caller must not report "no device connected" when
+     * nothing was received.
+     */
+    val payloadAbsent: Boolean = false,
 ) {
     val activeCount: Int get() = devices.count { it.presence == DevicePresence.ACTIVE }
     val cabledCount: Int get() = devices.count { it.presence == DevicePresence.CABLED }

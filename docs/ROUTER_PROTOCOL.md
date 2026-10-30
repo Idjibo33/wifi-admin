@@ -293,6 +293,125 @@ Réponse :
 Le SSID des **commandes radio de configuration** (cmd 2 pour le 2,4 GHz, cmd 211 pour le 5 GHz) est **encodé en Base64** et doit être décodé (`app/.../ZltRouterClient.kt:863-871`, `:885-886`, `:890-891` ; fixture Base64 dans `app/.../ZltRouterClientTest.kt:384`).
 Dans les listes d'associations `cmd 224` / `cmd 225`, le SSID est repris **tel quel** par le client de référence, sans décodage Base64. **Cela reste à vérifier sur le firmware 6.07.0** : le SSID retourné par `cmd 224`/`cmd 225` peut être en Base64 comme en clair.
 
+### 3.6 Pare-feu — filtrage MAC (`cmd 23` / `30`)
+
+> **Lecture seule — et capacité `UNAVAILABLE`.**
+>
+> Aucune écriture n'est implémentée ni autorisée.
+>
+> **Observation définitive (30/10/2026) :** l'interface web **officielle** du
+> routeur, sur *Pare-Feu → Règles de filtrage → Filtrage MAC*, reçoit
+> exactement la même réponse que notre client :
+>
+> ```json
+> {"success": true, "cmd": 23, "message": ""}
+> ```
+>
+> HTTP 200, **sans `datas`**. Le firmware exécute la commande mais ne livre
+> aucune donnée. Deux clients indépendants obtiennent la même réponse : la
+> requête n'est pas en cause. Voir `FIREWALL_ANALYSIS.md` §13ter.
+
+Le filtrage MAC du pare-feu est **distinct** du filtrage d'association Wi-Fi
+(`cmd 278`, qui renvoie `LIMITED_ACCESS` sur ce firmware).
+
+| `cmd` | Nom | Corps de lecture | Réponse observée (30/10/2026) |
+|---|---|---|---|
+| `23` | `MAC_FILTER` | `{"cmd":23,"method":"GET","sessionId":"<session>","language":"fr"}` | `success: true`, `message: ""`, **pas de `datas`** |
+| `30` | `MAC_DEFAULT_FILTER` | `{"cmd":30,"method":"GET","sessionId":"<session>","language":"fr"}` | `success: true`, `message: ""`, **pas de `datas`** |
+| `28` | `DEFAULT_FILTER` | *(non utilisé : `cmd 30` couvre IPv4 et IPv6)* | non observé — piste fermée |
+| `20` | `APPLY_FILTER` | **interdit en lecture seule** | — |
+| `233` | `RESET_LOGIN_TIME` | **interdit en lecture seule** (jeton d'écriture) | — |
+
+**Forme attendue mais jamais obtenue :** une règle de `cmd 23` porterait cinq
+champs — `enableRule` (active), `enableLink` (`false` = liste noire,
+`true` = liste blanche — déduction), `ippro` (`IPV4` / `IPV6` / `IPV4V6`),
+`mac` et `remark`. L'ordre du tableau `datas` **serait** la priorité ; le
+routeur accepterait au plus **32 règles**. `cmd 30` porterait deux entrées,
+IPv4 et IPv6, avec `acceptAll`.
+
+> **Aucun de ces champs n'a été observé.** Ils proviennent de transcriptions
+> non vérifiables (`macFilter.js`, `defaultMac.js` — **P2**) et restent
+> consignés à titre documentaire.
+
+> **Preuves** : table `RequestCmd` (`main.js:50-62`, **P1**) ; forme des
+> règles (`macFilter.js:152-157`, **P2**). La forme exacte de `GET 23` **a
+> été observée** : c'est un succès sans charge utile.
+
+#### 3.6bis Le champ `language`
+
+L'interface web du routeur envoie **toujours** `language`
+(`main.js:1799-1801`) :
+
+```javascript
+if (!json.language) { json.language = Page.language; }
+```
+
+Le client **ne l'envoyait pas** avant la mission 05 : c'était un écart de
+protocole avéré. Il l'envoie désormais, comme le routeur lui-même.
+
+> Le champ `token` reste ajouté **uniquement** pour `method == "POST"`
+> (`main.js:1792-1797`) : un `GET` n'en a jamais.
+
+#### 3.6ter Le champ `message` n'est pas un statut
+
+`message` est un **canal polymorphe** : statut d'erreur sur un échec, code
+de résultat sur d'autres commandes (`"0"` = succès sur `cmd 132`), ou même
+payload sérialisé (`cmd 82`).
+
+> **P1** : `main.js:1853-1854` — sur `success == true`, le client web
+> appelle `settings.success(data)` et **ne lit jamais** `message`.
+
+Conséquence : un `message` **non vide** sur une réponse réussie signale un
+**chemin de code différent** de celui des listes d'appareils. Le client
+**catégorise** le message sans jamais publier sa valeur brute
+(`RouterMessageSanitizer`).
+
+**Allowlist de lecture** : `{232, 100, 23, 30, 223, 224, 225}`. Le client
+refuse toute autre commande avant de construire la requête.
+
+#### 3.6terbis Variantes de lecture — piste fermée
+
+Deux variantes avaient été implémentées pour tenter d'obtenir la charge utile,
+**une seule chose changeant à la fois** :
+
+| Variante | Commande | Changement | Statut |
+|---|---|---|---|
+| `default` | `GET 23` + `GET 30` | aucun | observé : succès creux |
+| `getfun` | `GET 23` + `GET 30` | ajoute `getfun: "true"` à `GET 23` seulement | **fermée** |
+| `cmd28` | `GET 23` + `GET 28` | remplace `GET 30` par `GET 28` | **fermée** |
+
+`getfun` venait d'une transcription de `macFilter.js` dont la source n'a pas
+pu être vérifiée. L'interface officielle envoie sa propre requête et reçoit la
+même réponse creuse : **le drapeau n'est pas la condition manquante**.
+
+`cmd 28` (`DEFAULT_FILTER`) est commenté dans la table des menus
+(`main.js:565`) : c'est une API héritée. Rien n'indique qu'elle soit câblée,
+et le handler qui ne sert pas `23`/`30` ne la servira pas davantage.
+
+> **Décision (30/10/2026) :** aucune variante ne doit être envoyée au routeur
+> réel sans l'un des faits nouveaux listés dans `FIREWALL_ANALYSIS.md`
+> §13ter.6. Le code des variantes est conservé et testé, mais **gelé**.
+
+#### 3.6quater Règle générale : une réponse sans `datas` n'est jamais une liste vide
+
+Cette règle dépasse le pare-feu et s'applique à **toute** commande de lecture :
+
+| Réponse | Interprétation | Interdit |
+|---|---|---|
+| `datas: []` | liste **vide confirmée** | — |
+| `datas: null` | charge utile **présente mais nulle** | l'afficher comme vide |
+| `datas` **absent** | le firmware **n'a rien livré** | l'afficher comme une liste vide |
+| `success: false` | refus explicite | le confondre avec une absence |
+
+Le client expose quatre états distincts — `DATA_RECEIVED`,
+`RESPONSE_INVALID`, `FEATURE_UNAVAILABLE`, `UNKNOWN` — et **n'affiche un
+nombre d'éléments que dans `DATA_RECEIVED`**.
+
+> **P1 :** l'interface officielle elle-même ne traite pas l'absence comme une
+> liste vide : `cmd 23` fait `data.datas.length` et `cmd 30` fait
+> `data.datas[0]` **sans garde-fou** — elle planterait. Seul `cmd 28` teste
+> `if (!!data.datas)`.
+
 ---
 
 ## 4. Fusion et dé-duplication

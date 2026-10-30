@@ -1222,7 +1222,7 @@ Et, pour `cmd 132` (WPS), la convention est **inverse** : `subcmd '0'` =
 
 ## 9quater. Résultat de la lecture réelle : `cmd 278` est indisponible
 
-> **Statut : DISPONIBLE (firmware Airtel 6.07.0).**
+> **Statut : INDISPONIBLE (firmware Airtel 6.07.0).**
 
 Le test réel, exécuté par l'utilisateur sur son routeur, a renvoyé sur les
 deux bandes :

@@ -200,10 +200,15 @@ private fun DeviceList(
 
         when {
             devices.isEmpty() -> EmptyState(
-                message = if (state.devices.isEmpty()) {
-                    "Aucun appareil signalé par le routeur."
-                } else {
-                    "Aucun appareil ne correspond à votre recherche."
+                message = when {
+                    // The router answered without any device list: nothing was
+                    // received, which is not the same as an empty network.
+                    state.payloadAbsent ->
+                        "Réponse du routeur vide : aucune liste d'appareils n'a été reçue."
+                    state.devices.isEmpty() ->
+                        "Aucun appareil signalé par le routeur."
+                    else ->
+                        "Aucun appareil ne correspond à votre recherche."
                 },
                 modifier = Modifier.fillMaxWidth()
             )

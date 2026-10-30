@@ -26,6 +26,12 @@ class OkHttpRouterTransport(
         // Off: OkHttp would silently repeat a POST after a connection failure.
         // The router may already have acted on it.
         .retryOnConnectionFailure(false)
+        // Off: a redirection would hand the request body — which carries the
+        // password hash, the challenge token and the session id — to
+        // whatever host the reply names. The router's protocol has no
+        // legitimate use for a redirection, so any of them is a failure.
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     override fun post(url: String, body: String, timeoutSeconds: Long): String {

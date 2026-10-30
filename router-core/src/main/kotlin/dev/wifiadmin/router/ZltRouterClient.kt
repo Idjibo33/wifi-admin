@@ -10,8 +10,9 @@ import java.util.UUID
  * Read-only client for the ZLT router web API.
  *
  * The client only ever sends the commands 232 (challenge token), 100 (login)
- * and the three read commands 223, 224 and 225. It never changes anything on
- * the router.
+ * and read commands from [READ_ONLY_COMMANDS]: 223, 224, 225 for the device
+ * lists, and 23, 30 for the firewall MAC filter. It never changes anything
+ * on the router.
  *
  * The session id, the challenge token and the password are never logged and
  * never appear in an exception message.
@@ -26,15 +27,6 @@ class ZltRouterClient(
 
     /** The current session id, or null when there is no usable session. */
     private var sessionId: String? = null
-
-    /**
-     * The challenge token of the last login attempt.
-     *
-     * It is kept only so that [redact] can strip it if the router echoes it
-     * back in an error message. The protocol does not constrain its format, so
-     * it cannot be recognised by a pattern.
-     */
-    private var challengeToken: String? = null
 
     private val endpoint: String
         get() = "http://${settings.routerHost.trim()}$ENDPOINT_PATH"
@@ -57,17 +49,14 @@ class ZltRouterClient(
         val cooldown = lockoutSecondsRemaining(tokenResponse)
         if (cooldown > 0) {
             sessionId = null
-            challengeToken = null
             throw RouterCooldownException(cooldown)
         }
 
         val token = tokenResponse.optString("token", "").trim()
         if (token.isEmpty()) {
             sessionId = null
-            challengeToken = null
             return false
         }
-        challengeToken = token
 
         val generatedSessionId = newSessionId()
         val response = send(
@@ -84,7 +73,6 @@ class ZltRouterClient(
 
         if (isExplicitLoginFailure(response)) {
             sessionId = null
-            challengeToken = null
             return false
         }
 
@@ -93,7 +81,6 @@ class ZltRouterClient(
             // logins (a hard lock) without saying for how long. It is *not* a
             // wrong password, so it must not be reported as one.
             sessionId = null
-            challengeToken = null
             throw RouterCooldownException(retryAfterSeconds = null)
         }
 
@@ -170,6 +157,12 @@ class ZltRouterClient(
             leases = RouterPayloadParser.parseDhcpLeases(dhcpReply),
             wifi24 = RouterPayloadParser.parseWifi24Associations(wifi24Reply),
             wifi5 = RouterPayloadParser.parseWifi5Associations(wifi5Reply),
+        ).copy(
+            payloadAbsent = RouterPayloadParser.payloadAbsent(
+                dhcpReply,
+                wifi24Reply,
+                wifi5Reply,
+            )
         )
     }
 
@@ -177,9 +170,27 @@ class ZltRouterClient(
     fun invalidateSession() {
         synchronized(lock) {
             sessionId = null
-            challengeToken = null
         }
     }
+
+    /**
+     * Sends one read command on the current session.
+     *
+     * This is the only gate a firewall or Wi-Fi client can use to reach the
+     * transport. The command must belong to [READ_ONLY_COMMANDS]; anything
+     * else is rejected **before** any request is built, so no caller can turn
+     * this client into a write path by passing another number.
+     *
+     * It is `internal`: the public API of the module does not expose it.
+     */
+    internal fun readOnly(cmd: Int, extra: Map<String, Any> = emptyMap()): JSONObject =
+        synchronized(lock) {
+            require(cmd in READ_ONLY_COMMANDS) {
+                "Command $cmd is not in the read-only allowlist"
+            }
+            ensureSession()
+            read(cmd, extra)
+        }
 
     // ---- Internals ----
 
@@ -201,15 +212,15 @@ class ZltRouterClient(
      * rule of the reference client does not apply yet. It must be enforced
      * before any mutating command is added.
      */
-    private fun read(cmd: Int): JSONObject {
-        var response = sendRead(cmd)
+    private fun read(cmd: Int, extra: Map<String, Any> = emptyMap()): JSONObject {
+        var response = sendRead(cmd, extra)
         if (isSessionExpired(response)) {
             if (!login()) {
                 throw RouterAuthenticationException(
                     "The router rejected the re-login, the session could not be renewed"
                 )
             }
-            response = sendRead(cmd)
+            response = sendRead(cmd, extra)
             if (isSessionExpired(response)) {
                 throw RouterAuthenticationException(
                     "The router still reports an expired session after the re-login"
@@ -217,20 +228,42 @@ class ZltRouterClient(
             }
         }
         if (!isSuccess(response)) {
+            if (isFeatureUnavailable(response)) {
+                throw RouterFeatureUnavailableException(
+                    feature = featureName(cmd),
+                    routerMessage = describeFailure(response),
+                )
+            }
             throw RouterProtocolException(
-                "The router rejected command $cmd: ${describeFailure(response)}"
+                "The router did not accept command $cmd: ${describeFailure(response)}"
+            )
+        }
+
+        // A refusal is a refusal even when the router also claims success.
+        // On this firmware `LIMITED_ACCESS` is the documented way of saying
+        // "this command is disabled for this account"; it must not be
+        // mistaken for an empty result.
+        if (isFeatureUnavailable(response)) {
+            throw RouterFeatureUnavailableException(
+                feature = featureName(cmd),
+                routerMessage = describeFailure(response),
             )
         }
         return response
     }
 
+    private fun featureName(cmd: Int): String = when (cmd) {
+        CMD_MAC_FILTER, CMD_MAC_DEFAULT_FILTER -> "firewall"
+        else -> "devices"
+    }
+
     /** Sends a read command, retrying once on a network failure. */
-    private fun sendRead(cmd: Int): JSONObject {
+    private fun sendRead(cmd: Int, extra: Map<String, Any> = emptyMap()): JSONObject {
         try {
-            return send(cmd, method = "GET", sessionId = sessionId.orEmpty())
+            return send(cmd, method = "GET", sessionId = sessionId.orEmpty(), extra = extra)
         } catch (e: RouterNetworkException) {
             // A read is safe to repeat: the worst case is one duplicated query.
-            return send(cmd, method = "GET", sessionId = sessionId.orEmpty())
+            return send(cmd, method = "GET", sessionId = sessionId.orEmpty(), extra = extra)
         }
     }
 
@@ -245,6 +278,11 @@ class ZltRouterClient(
             put("cmd", cmd)
             put("method", method)
             put("sessionId", sessionId)
+            // The router's own web UI always sends `language`
+            // (`main.js`: `if (!json.language) json.language = Page.language`).
+            // Sending it costs nothing and removes one protocol difference
+            // with the router's own client.
+            put("language", LANGUAGE)
             extra.forEach { (key, value) -> put(key, value) }
         }
 
@@ -279,41 +317,62 @@ class ZltRouterClient(
     private fun isSessionExpired(response: JSONObject): Boolean =
         response.optString("message", "") in SESSION_EXPIRED_MESSAGES
 
+    /** The firmware refuses this command for this account (`LIMITED_ACCESS`). */
+    private fun isFeatureUnavailable(response: JSONObject): Boolean {
+        val category = RouterMessageSanitizer.categorize(
+            messagePresent = response.has("message"),
+            raw = response.opt("message"),
+        )
+        if (category == RouterMessageCategory.LIMITED_ACCESS) return true
+
+        val error = response.opt("error")
+        return error is String && error.trim().equals("LIMITED_ACCESS", ignoreCase = true)
+    }
+
     private fun isSuccess(response: JSONObject): Boolean {
-        if (response.has("error")) return false
+        // An `error` field that is explicitly null is not an error.
+        if (response.has("error") && !response.isNull("error")) return false
         return response.optBoolean("success", false)
     }
 
     /**
      * A short, secret-free description of why a reply was not successful.
      *
-     * The router's own message is used, but it is redacted: a router that echoes
-     * the session id or a token back must not leak it into a log or a message.
+     * The router's own message is **not** reproduced: a router is not a
+     * trusted source, and its `message` may hold anything. Only the
+     * enumerated tokens are shown; every other value becomes `<message>`.
+     *
+     * The category is always kept, because it is what explains the failure.
      */
     private fun describeFailure(response: JSONObject): String {
-        val message = response.optString("message", "").trim()
-        if (message.isNotEmpty() && !message.equals("null", ignoreCase = true)) {
-            return redact(message)
+        val messagePresent = response.has("message")
+        val raw = if (messagePresent) response.opt("message") else null
+        val category = RouterMessageSanitizer.categorize(messagePresent, raw)
+        val display = RouterMessageSanitizer.displayValue(messagePresent, raw)
+
+        return when (category) {
+            RouterMessageCategory.LIMITED_ACCESS ->
+                "the firmware refuses this command (LIMITED_ACCESS)"
+            RouterMessageCategory.SESSION_EXPIRED ->
+                "the session has expired (NO_AUTH)"
+            RouterMessageCategory.SESSION_TIMEOUT ->
+                "the session has expired (LOGIN_TIMEOUT)"
+            RouterMessageCategory.MISSING_PARAMETER ->
+                "the router requires a parameter this client does not send"
+            RouterMessageCategory.SUCCESS ->
+                "the router answered 'success' but the reply is unusable"
+            RouterMessageCategory.ABSENT, RouterMessageCategory.NULL,
+            RouterMessageCategory.EMPTY, RouterMessageCategory.DISPLAYABLE,
+            RouterMessageCategory.UNKNOWN -> {
+                if (response.has("error") && !response.isNull("error")) {
+                    "the reply carries an error field ($display)"
+                } else {
+                    "the reply did not report success ($display)"
+                }
+            }
         }
-        val error = response.optString("error", "").trim()
-        if (error.isNotEmpty()) return redact(error)
-        return "the reply did not report success"
     }
 
-    /**
-     * Removes the session id, the challenge token and any long hex token from a
-     * router message.
-     *
-     * The session id and the challenge token are removed explicitly because the
-     * protocol does not constrain their format: they cannot be recognised by a
-     * pattern the way a hexadecimal password hash can.
-     */
-    private fun redact(text: String): String {
-        var result = text
-        sessionId?.takeIf { it.isNotEmpty() }?.let { result = result.replace(it, "<session>") }
-        challengeToken?.takeIf { it.isNotEmpty() }?.let { result = result.replace(it, "<token>") }
-        return result.replace(HEX_TOKEN_PATTERN, "<token>")
-    }
 
     private fun newSessionId(): String =
         UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "")
@@ -326,8 +385,37 @@ class ZltRouterClient(
     companion object {
         private const val ENDPOINT_PATH = "/cgi-bin/http.cgi"
 
+        /**
+         * The language sent with every request.
+         *
+         * The router's web UI always sends the current interface language
+         * (`main.js`: `if (!json.language) json.language = Page.language`).
+         * The device was configured in French; the firmware answers in the
+         * requested language.
+         */
+        private const val LANGUAGE = "fr"
+
         private const val CMD_LOGIN = 100
         private const val CMD_CHALLENGE = 232
+        private const val CMD_MAC_FILTER = 23
+        private const val CMD_MAC_DEFAULT_FILTER = 30
+        private const val CMD_DEFAULT_FILTER = 28
+
+        /**
+         * Every command this client may send with `GET`, besides the
+         * challenge token of the login.
+         *
+         * 20 (apply) and 233 (write token) are deliberately absent: they are
+         * the two commands that make a write possible.
+         */
+        private val READ_ONLY_COMMANDS = setOf(
+            CMD_MAC_FILTER,
+            CMD_MAC_DEFAULT_FILTER,
+            CMD_DEFAULT_FILTER,
+            223,
+            224,
+            225,
+        )
 
         private val SESSION_EXPIRED_MESSAGES = setOf("NO_AUTH", "LOGIN_TIMEOUT")
 
@@ -344,7 +432,5 @@ class ZltRouterClient(
          */
         private val LOGIN_FAILURE_FALSE_VALUES = setOf("success", "ok", "0", "false")
 
-        /** A long hex string: a session id, a token or a password hash. */
-        private val HEX_TOKEN_PATTERN = Regex("[0-9a-fA-F]{16,}")
     }
 }

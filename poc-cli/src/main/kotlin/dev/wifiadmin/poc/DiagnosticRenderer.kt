@@ -17,17 +17,54 @@ import dev.wifiadmin.router.WifiBand
  */
 object DiagnosticRenderer {
 
+    /**
+     * Renders the diagnostic.
+     *
+     * @param devices the devices that were read.
+     * @param commands the commands that were **really sent**, in order. It
+     *   comes from the transport journal, never from a static catalogue: a
+     *   report that announces a command which was not used is a false
+     *   statement about the run.
+     * @param commandPairs the distinct `(cmd, method)` pairs that were sent.
+     * @param commandCounts how many times each command was sent. A command
+     *   sent twice is shown as such: the Wi-Fi client opens its own
+     *   session, so it authenticates again.
+     * @param payloadAbsent whether the router delivered no device list at
+     *   all. It is then dishonest to write "0 devices detected": nothing
+     *   was received.
+     */
     fun render(
         devices: List<RouterDevice>,
-        commands: List<Int> = emptyList()
+        commands: List<Int> = emptyList(),
+        commandPairs: List<Pair<Int, String>> = emptyList(),
+        commandCounts: List<Pair<Int, Int>> = emptyList(),
+        payloadAbsent: Boolean = false,
     ): String = buildString {
         appendLine("=== Diagnostic anonymisé du routeur ===")
         appendLine()
 
-        appendLine("Commandes envoyées (lecture seule) : ${commands.joinToString(", ")}")
+        appendLine("Commandes envoyées (lecture seule) : ${commands.joinToString(", ").ifEmpty { "(aucune)" }}")
+        if (commandCounts.isNotEmpty()) {
+            appendLine(
+                "Nombre d'envois : " +
+                    commandCounts.joinToString(", ") { (cmd, count) ->
+                        if (count > 1) "$cmd ×$count" else "$cmd"
+                    }
+            )
+        }
+        if (commandPairs.isNotEmpty()) {
+            appendLine(
+                "Détail des envois : " +
+                    commandPairs.joinToString(", ") { (cmd, method) -> "$method $cmd" }
+            )
+        }
         appendLine()
 
-        appendLine("Appareils détectés : ${devices.size}")
+        if (payloadAbsent) {
+            appendLine("Appareils détectés : INCONNU (le routeur n'a renvoyé aucune liste)")
+        } else {
+            appendLine("Appareils détectés : ${devices.size}")
+        }
         appendLine()
 
         appendLine("Répartition des états :")

@@ -152,7 +152,7 @@ class WifiMacFilterClient(
         if (wifiStatus != "1") {
             return Result.failure(
                 WifiMacCompatibilityException.CommandRefused(
-                    "The Wi-Fi is not initialised (wifiStatus='$wifiStatus'); " +
+                    "The Wi-Fi is not initialised; " +
                         "the router refuses MAC filter writes in this state"
                 )
             )
@@ -212,6 +212,9 @@ class WifiMacFilterClient(
         if (newState.locksOutEveryDevice) {
             throw WifiMacValidationException.WouldLockOutEveryDevice(newState.band)
         }
+        // A state whose payload was never delivered cannot be written: the
+        // mode is unknown, so the router would receive an invented one.
+        val mode = newState.mode ?: throw WifiMacValidationException.UnknownState(newState.band)
         validateEntries(newState)
 
         // --- Optimistic concurrency check -----------------------------
@@ -231,7 +234,7 @@ class WifiMacFilterClient(
             mapOf(
                 "subcmd" to newState.band.subcmd,
                 "datas" to JSONObject().apply {
-                    put("macfilter", newState.mode.wire)
+                    put("macfilter", mode.wire)
                     put("maclist", JSONArray().apply {
                         newState.entries.forEach { entry ->
                             put(
@@ -267,6 +270,9 @@ class WifiMacFilterClient(
         if (saved.locksOutEveryDevice) {
             throw WifiMacValidationException.WouldLockOutEveryDevice(saved.band)
         }
+        // A state that was never read cannot be restored: its mode is
+        // unknown and the write would send an invented one.
+        val mode = saved.mode ?: throw WifiMacValidationException.UnknownState(saved.band)
         validateEntries(saved)
         checkWritable(saved.band).getOrThrow()
 
@@ -275,7 +281,7 @@ class WifiMacFilterClient(
             mapOf(
                 "subcmd" to saved.band.subcmd,
                 "datas" to JSONObject().apply {
-                    put("macfilter", saved.mode.wire)
+                    put("macfilter", mode.wire)
                     put("maclist", JSONArray().apply {
                         saved.entries.forEach { entry ->
                             put(
@@ -331,17 +337,21 @@ class WifiMacFilterClient(
     /** Parses the `datas` object of a `cmd 278` reply. */
     internal fun parseState(band: WifiBandFilter, response: JSONObject): WifiMacFilterState {
         if (!response.has("datas") || response.isNull("datas")) {
-            // The web UI treats a missing `datas` as "no filter configured".
-            return WifiMacFilterState(band, WifiMacMode.CLOSE, emptyList())
+            // The payload is missing: the filter's state is **unknown**.
+            // Claiming "no filter configured" would assert something the
+            // router never said.
+            return WifiMacFilterState(
+                band = band,
+                mode = null,
+                entries = emptyList(),
+                payloadPresent = false,
+            )
         }
         val datas = response.optJSONObject("datas")
             ?: throw WifiMacCompatibilityException.MissingDatas(band)
 
         val mode = WifiMacMode.fromWire(datas.optString("macfilter", ""))
-            ?: throw WifiMacCompatibilityException.UnknownMode(
-                band,
-                datas.optString("macfilter", "")
-            )
+            ?: throw WifiMacCompatibilityException.UnknownMode(band)
 
         val list = datas.optJSONArray("maclist")
         val entries = if (list == null) {
@@ -424,6 +434,9 @@ class WifiMacFilterClient(
             put("cmd", cmd)
             put("method", method)
             put("sessionId", sessionId.orEmpty())
+            // The router's own web UI always sends `language`
+            // (`main.js`: `if (!json.language) json.language = Page.language`).
+            put("language", LANGUAGE)
             extra.forEach { (key, value) -> put(key, value) }
         }
 
@@ -469,8 +482,10 @@ class WifiMacFilterClient(
         }
 
         if (response.has("error") || (response.has("success") && !response.optBoolean("success", true))) {
+            // The router's `message` is free text: it may hold a secret, and
+            // the CLI prints exception messages. Only its category is kept.
             throw WifiMacCompatibilityException.CommandRefused(
-                "The router refused command $cmd: ${response.optString("message", "unknown error")}"
+                "The router refused command $cmd (${describeReply(response)})"
             )
         }
 
@@ -488,6 +503,7 @@ class WifiMacFilterClient(
                     .put("cmd", CMD_GET_NEXT_LOGIN_TIME)
                     .put("method", "GET")
                     .put("sessionId", "")
+                    .put("language", LANGUAGE)
                     .toString(),
                 timeoutSeconds
             )
@@ -514,6 +530,7 @@ class WifiMacFilterClient(
                     put("cmd", CMD_LOGIN)
                     put("method", "POST")
                     put("sessionId", generatedSessionId)
+                    put("language", LANGUAGE)
                     put("username", settings.username)
                     put("passwd", sha256Hex(challenge + settings.password))
                     put("isAutoUpgrade", "0")
@@ -546,6 +563,25 @@ class WifiMacFilterClient(
         java.util.UUID.randomUUID().toString().replace("-", "") +
             java.util.UUID.randomUUID().toString().replace("-", "")
 
+    /**
+     * A short description of a refused reply, built from closed values only.
+     *
+     * The router's own `message` is never reproduced: it is free text, and
+     * the CLI prints exception messages to the user.
+     */
+    private fun describeReply(response: JSONObject): String {
+        val message = response.optString("message", "").trim()
+        return when {
+            message.equals("LIMITED_ACCESS", ignoreCase = true) ->
+                "the firmware refuses this feature"
+            message.equals("NO_AUTH", ignoreCase = true) -> "the session has expired"
+            message.equals("LOGIN_TIMEOUT", ignoreCase = true) ->
+                "the session has expired"
+            message.isEmpty() -> "the reply gave no reason"
+            else -> "the reply gave an unrecognised reason"
+        }
+    }
+
     private fun sha256Hex(value: String): String =
         java.security.MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
@@ -553,6 +589,13 @@ class WifiMacFilterClient(
 
     private companion object {
         private const val ENDPOINT_PATH = "/cgi-bin/http.cgi"
+        /**
+         * The language sent with every request.
+         *
+         * The router's web UI always sends the current interface language
+         * (`main.js`: `if (!json.language) json.language = Page.language`).
+         */
+        private const val LANGUAGE = "fr"
 
         private const val CMD_LOGIN = 100
         private const val CMD_GET_NEXT_LOGIN_TIME = 232
