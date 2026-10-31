@@ -1031,3 +1031,72 @@ mutante, et aucun écran ne propose « Bloquer » / « Débloquer ».
   `FirewallMacModels` ne parlent plus d'une « fonctionnalité à venir » : ils
   enregistrent le verdict `UNAVAILABLE`.
 - `docs/FIREWALL_ANALYSIS.md` §13ter est la référence de la clôture.
+
+---
+
+## 18. Mission 08 — dernier instantané et expiration de session (31/10/2026)
+
+### 18.1 Objectif
+
+Améliorer la fiabilité du MVP Android **sans élargir le périmètre** :
+
+- conserver localement le dernier état valide des appareils et l'afficher
+  pendant la première synchronisation, avec une indication explicite de son
+  ancienneté ;
+- détecter une **expiration réelle** de session, revenir proprement à la
+  connexion et distinguer cette situation de toutes les erreurs réseau.
+
+Aucune écriture sur le routeur, aucun bouton Bloquer/Débloquer, aucun backend,
+aucune persistance du mot de passe.
+
+### 18.2 Décisions d'architecture
+
+| Sujet | Décision |
+|---|---|
+| Stockage | Fichier JSON unique dans `noBackupFilesDir`, pas de Room ni de DataStore. |
+| Atomicité | Fichier temporaire + `fsync` + `ATOMIC_MOVE`. |
+| Contenu | Liste blanche de clés : appareils, hôte, compte, date. Jamais mot de passe, jeton, session ou challenge. |
+| Contexte | Hôte normalisé + compte. Un instantané d'un autre routeur/compte est supprimé, jamais affiché. |
+| Restauration | Uniquement après acceptation des identifiants. |
+| Expiration | `RouterAuthenticationException` pendant une lecture → `SessionExpired`. Une lecture ne porte aucun mot de passe. |
+| Cooldown | État `Cooldown` distinct, aucune navigation, aucun retry automatique, client conservé en mémoire. |
+| Navigation | `LaunchedEffect` unique keyé sur l'état, `popUpTo(graph.id) { inclusive = true }`, `launchSingleTop`, `restoreState = false`. |
+| Cache et UI | Bandeau « Dernières données connues — actualisées le … », badges neutres, compteur « Wi-Fi (lecture) ». |
+| `payloadAbsent` | Jamais écrit sur disque, ne remplace pas un bon instantané. |
+
+### 18.3 Fichiers principaux
+
+- `data/SnapshotStore.kt` — codec JSON, écriture atomique, bornes, rejet.
+- `data/RouterRepository.kt` — restauration, génération, états, écriture conditionnelle.
+- `data/ZltRouterAdapter.kt` — mapping expiration/timeout.
+- `data/RouterAdapter.kt` — `Timeout`, `SessionExpired`, `NotConnected`.
+- `navigation/SessionNavigation.kt` — règle pure `shouldReturnToLogin`.
+- `ui/components/CommonComponents.kt` — `CachedDataBanner`.
+- `ui/components/Presentation.kt` — libellés cache, date, messages d'erreur.
+- `ui/dashboard`, `ui/devices`, `ui/login` — amorçage du cache et états.
+- `WifiAdminApplication.kt` — injection du `SnapshotStore`.
+
+### 18.4 Tests
+
+| Suite | Tests | Échecs |
+|---|---|---|
+| `router-core` | **183** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **89** | 0 |
+| **Total** | **328** | **0** |
+
+Scénarios hors ligne : **10/10** conformes, aucune tentative d'écriture.
+
+Tests ajoutés : `SnapshotStoreTest` (14), `RouterRepositorySnapshotTest` (14),
+`SessionNavigationTest` (8), `PresentationTest` (9), `CacheDisplayTest` (6),
+et 3 tests d'expiration/timeout dans `LoginViewModelTest`.
+
+### 18.5 Limites et validation réelle
+
+- Aucune action n'a été effectuée sur le routeur réel.
+- La détection d'expiration repose sur le comportement documenté du firmware
+  (`NO_AUTH`, `LOGIN_TIMEOUT`) et sur le renouvellement unique déjà implémenté.
+- La procédure de validation sur téléphone est décrite dans
+  `docs/MISSION_08_PHONE_TEST.md`.
+- Le rapport consolidé (sécurité, non-régression, revue indépendante) est dans
+  `docs/MISSION_08_REPORT.md`.

@@ -4,6 +4,8 @@ import android.app.Application
 import dev.wifiadmin.app.data.RouterAddressResolver
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.SettingsStore
+import dev.wifiadmin.app.data.SnapshotStore
+import java.io.File
 
 /**
  * Holds the objects that live for the whole life of the app.
@@ -28,7 +30,20 @@ class AppContainer(application: Application) {
 
     val settingsStore: SettingsStore = SettingsStore(application)
 
-    val routerRepository: RouterRepository = RouterRepository()
+    /**
+     * The last device snapshot.
+     *
+     * `noBackupFilesDir` is excluded from cloud backup and device-to-device
+     * transfer by the framework. A device list restored on another phone
+     * would be both a leak and a lie: another network, another account.
+     */
+    val snapshotStore: SnapshotStore = SnapshotStore(
+        file = File(application.noBackupFilesDir, SnapshotStore.FILE_NAME)
+    )
+
+    val routerRepository: RouterRepository = RouterRepository(
+        snapshotStore = snapshotStore
+    )
 
     /** Suggests the router address from the current Wi-Fi network. */
     val routerAddressResolver: RouterAddressResolver = RouterAddressResolver(application)

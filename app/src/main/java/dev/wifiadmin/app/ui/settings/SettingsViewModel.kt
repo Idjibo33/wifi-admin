@@ -55,7 +55,9 @@ class SettingsViewModel(
 
     /** Drops the session and returns to the login screen. */
     fun disconnect(onDone: () -> Unit) {
-        repository.disconnect()
-        onDone()
+        viewModelScope.launch {
+            repository.disconnect()
+            onDone()
+        }
     }
 }

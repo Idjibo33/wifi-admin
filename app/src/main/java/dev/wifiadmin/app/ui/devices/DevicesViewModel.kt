@@ -3,6 +3,8 @@ package dev.wifiadmin.app.ui.devices
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.wifiadmin.app.data.RouterRepository
+import dev.wifiadmin.app.data.RouterUnavailableException
+import dev.wifiadmin.app.ui.components.userMessage
 import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.RouterDevice
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,14 +57,27 @@ data class DevicesUiState(
      * The screen must not claim that no device is connected in that case:
      * nothing was received, which is not the same thing as an empty network.
      */
-    val payloadAbsent: Boolean = false
+    val payloadAbsent: Boolean = false,
+    /**
+     * True when the displayed devices come from disk, not from a read made
+     * during this session.
+     */
+    val isFromCache: Boolean = false,
+    /** True when the last synchronisation failed while devices were shown. */
+    val isSyncFailed: Boolean = false,
+    /** True once a snapshot — live or cached — has been displayed. */
+    val hasSnapshot: Boolean = false,
 ) {
 
     /** True when the screen has nothing to show but a spinner. */
-    val isFirstLoad: Boolean get() = isLoading && devices.isEmpty()
+    val isFirstLoad: Boolean get() = isLoading && !hasSnapshot
 
     /** True when a failure happened and there is no device to fall back on. */
-    val isFatalError: Boolean get() = errorMessage != null && devices.isEmpty()
+    val isFatalError: Boolean get() = errorMessage != null && !hasSnapshot
+
+    /** True when the list on screen is not a fresh, complete read. */
+    val hasStaleData: Boolean
+        get() = hasSnapshot && (isFromCache || isSyncFailed || payloadAbsent)
 
     /**
      * The devices matching both the search query and the filter.
@@ -100,6 +115,9 @@ data class DevicesUiState(
  *
  * The ViewModel only reads the router through the repository; it never opens a
  * session and never touches the Android framework.
+ *
+ * On creation it first adopts the snapshot the repository already holds (the
+ * one restored from disk right after a successful login), then refreshes it.
  */
 class DevicesViewModel(
     private val repository: RouterRepository
@@ -109,7 +127,23 @@ class DevicesViewModel(
     val state: StateFlow<DevicesUiState> = _state.asStateFlow()
 
     init {
+        seedFromRepository()
         refresh()
+    }
+
+    /** Adopts the snapshot the repository restored after authentication. */
+    private fun seedFromRepository() {
+        val repositoryState = repository.state.value
+        if (!repositoryState.isConnected) return
+        val snapshot = repositoryState.snapshot ?: return
+
+        _state.value = _state.value.copy(
+            devices = snapshot.devices,
+            lastRefreshMillis = snapshot.capturedAtMillis,
+            payloadAbsent = repositoryState.payloadAbsent,
+            isFromCache = repositoryState.isShowingCachedSnapshot,
+            hasSnapshot = true,
+        )
     }
 
     /** Sets the search text. */
@@ -129,10 +163,10 @@ class DevicesViewModel(
      * devices already on screen while the refresh runs.
      */
     fun refresh() {
-        val hadDevices = _state.value.devices.isNotEmpty()
+        val hadSnapshot = _state.value.hasSnapshot
 
         _state.value = _state.value.copy(
-            isLoading = !hadDevices,
+            isLoading = !hadSnapshot,
             errorMessage = null
         )
 
@@ -140,18 +174,28 @@ class DevicesViewModel(
             val result = repository.refresh()
             result
                 .onSuccess { snapshot ->
+                    // When the router answered without a list, the repository
+                    // keeps the previous snapshot. Show what it settled on.
+                    val effective = repository.state.value.snapshot ?: snapshot
                     _state.value = _state.value.copy(
                         isLoading = false,
-                        devices = snapshot.devices,
-                        lastRefreshMillis = snapshot.capturedAtMillis,
+                        devices = effective.devices,
+                        lastRefreshMillis = effective.capturedAtMillis,
                         payloadAbsent = snapshot.payloadAbsent,
+                        hasSnapshot = true,
+                        isFromCache = repository.state.value.isShowingCachedSnapshot,
+                        isSyncFailed = false,
                         errorMessage = null
                     )
                 }
                 .onFailure { error ->
+                    val hasSnapshot = _state.value.hasSnapshot
                     _state.value = _state.value.copy(
                         isLoading = false,
-                        errorMessage = error.message ?: "Impossible de joindre le routeur."
+                        isSyncFailed = hasSnapshot,
+                        errorMessage = (error as? RouterUnavailableException)?.userMessage()
+                            ?: error.message
+                            ?: "Impossible de joindre le routeur."
                     )
                 }
         }

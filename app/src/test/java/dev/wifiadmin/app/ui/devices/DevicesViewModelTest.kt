@@ -28,9 +28,16 @@ class DevicesViewModelTest {
     /**
      * A repository whose network calls run on the test dispatcher, so the
      * coroutines stay under the control of the test.
+     *
+     * The session is opened first: [RouterRepository.refresh] refuses to read
+     * without one, exactly like the production flow where the user signs in
+     * before any device list is fetched.
      */
-    private fun testRepository(adapter: RouterAdapter) =
-        RouterRepository(adapter, dispatcher)
+    private suspend fun testRepository(adapter: RouterAdapter): RouterRepository {
+        val repository = RouterRepository(adapter, dispatcher)
+        repository.connect("192.168.1.1", "admin", "secret")
+        return repository
+    }
 
     @Before
     fun setUp() {

@@ -1,8 +1,12 @@
 package dev.wifiadmin.app.ui.components
 
 import androidx.compose.ui.graphics.Color
+import dev.wifiadmin.app.data.RouterUnavailableException
 import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.WifiBand
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** The label shown for a device presence state. */
 fun DevicePresence.label(): String = when (this) {
@@ -53,4 +57,103 @@ fun DevicePresence.badgeColor(): Color = when (this) {
     DevicePresence.CABLED -> Color(0xFF1565C0)
     DevicePresence.STALE -> Color(0xFFEF6C00)
     DevicePresence.UNKNOWN -> Color(0xFF757575)
+}
+
+/**
+ * The label used when the device comes from a cached snapshot.
+ *
+ * A cached list says what the router reported at the time of the read, not
+ * what is connected now. Saying "Actif" would claim a live fact the app does
+ * not have; "Vu actif" only reports the past observation.
+ */
+fun DevicePresence.cachedLabel(): String = when (this) {
+    DevicePresence.ACTIVE -> "Vu actif"
+    DevicePresence.CABLED -> "Vu filaire"
+    DevicePresence.STALE -> "Périmé"
+    DevicePresence.UNKNOWN -> "Indéterminé"
+}
+
+/**
+ * The neutral colour of a presence badge in cached mode.
+ *
+ * Every state uses the same grey: a colour that usually means "currently
+ * connected" must not suggest a live reading.
+ */
+fun DevicePresence.cachedBadgeColor(): Color = Color(0xFF616161)
+
+/**
+ * Formats the moment a snapshot was captured, for the "last known data"
+ * banner.
+ *
+ * @param millis the epoch milliseconds, or null when unknown.
+ * @return a French date and time such as `31/10/2026 à 14:32`, or null.
+ */
+fun formatSnapshotDate(millis: Long?): String? {
+    if (millis == null) return null
+    val formatter = SimpleDateFormat("dd/MM/yyyy 'à' HH:mm", Locale.FRANCE)
+    return formatter.format(Date(millis))
+}
+
+/**
+ * The text of the "last known data" banner.
+ *
+ * Extracted from the composable so the exact wording — including the
+ * product-mandated sentence for cached data — is covered by a unit test.
+ *
+ * @return null when the data on screen is fresh and complete.
+ */
+fun cachedDataMessage(
+    capturedAtMillis: Long?,
+    isFromCache: Boolean,
+    isSyncFailed: Boolean,
+    payloadAbsent: Boolean,
+): String? {
+    if (!isFromCache && !isSyncFailed && !payloadAbsent) return null
+
+    val date = formatSnapshotDate(capturedAtMillis)
+    return when {
+        isFromCache -> if (date != null) {
+            "Dernières données connues — actualisées le $date."
+        } else {
+            "Dernières données connues — date d'actualisation inconnue."
+        }
+
+        payloadAbsent -> if (date != null) {
+            "Réponse incomplète du routeur — dernières données connues le $date."
+        } else {
+            "Réponse incomplète du routeur : aucune liste d'appareils reçue."
+        }
+
+        else -> if (date != null) {
+            "Synchronisation impossible — dernières données connues le $date."
+        } else {
+            "Synchronisation impossible — les données affichées peuvent être anciennes."
+        }
+    }
+}
+
+/**
+ * The French message shown for a router failure.
+ *
+ * The distinctions matter: a timeout, an unreachable router, a cooldown and
+ * an expired session are four different situations and must never be
+ * presented as the same thing.
+ */
+fun RouterUnavailableException.userMessage(): String = when (this) {
+    is RouterUnavailableException.Unreachable ->
+        "Le routeur est injoignable. Vérifiez que le téléphone est connecté à son Wi-Fi."
+    is RouterUnavailableException.Timeout ->
+        "Le routeur n'a pas répondu à temps."
+    is RouterUnavailableException.AuthenticationFailed ->
+        "Identifiants refusés par le routeur."
+    is RouterUnavailableException.SessionExpired ->
+        "Votre session a expiré. Reconnectez-vous pour continuer."
+    is RouterUnavailableException.NotConnected ->
+        "Aucune session n'est ouverte."
+    is RouterUnavailableException.Cooldown ->
+        retryAfterSeconds?.let { seconds ->
+            "Le routeur refuse temporairement les connexions pendant encore $seconds secondes."
+        } ?: "Le routeur refuse temporairement les connexions. Patientez quelques minutes."
+    is RouterUnavailableException.UnexpectedResponse ->
+        "Le routeur a répondu de façon inattendue."
 }

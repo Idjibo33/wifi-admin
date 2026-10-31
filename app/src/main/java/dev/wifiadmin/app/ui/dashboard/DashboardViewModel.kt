@@ -3,6 +3,8 @@ package dev.wifiadmin.app.ui.dashboard
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.wifiadmin.app.data.RouterRepository
+import dev.wifiadmin.app.data.RouterUnavailableException
+import dev.wifiadmin.app.ui.components.userMessage
 import dev.wifiadmin.router.DeviceSnapshot
 import dev.wifiadmin.router.WifiBand
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,13 +32,31 @@ data class DashboardUiState(
     /** The message of the last failure, or null. */
     val errorMessage: String? = null,
     /** True while a refresh runs on top of an existing snapshot. */
-    val isRefreshing: Boolean = false
+    val isRefreshing: Boolean = false,
+    /**
+     * True when the displayed snapshot comes from disk, not from a read made
+     * during this session.
+     *
+     * A cached snapshot describes the network **at the time of the read**. It
+     * must never be presented as the current state.
+     */
+    val isFromCache: Boolean = false,
+    /** True when the last synchronisation failed while a snapshot was shown. */
+    val isSyncFailed: Boolean = false,
+    /** True when the router answered without any device list. */
+    val payloadAbsent: Boolean = false,
+    /** True once a snapshot — live or cached — has been displayed. */
+    val hasSnapshot: Boolean = false,
 ) {
     /** True when the screen has nothing to show but a spinner. */
-    val isFirstLoad: Boolean get() = isLoading && snapshot == null
+    val isFirstLoad: Boolean get() = isLoading && !hasSnapshot
 
     /** True when a failure happened and there is no snapshot to fall back on. */
-    val isFatalError: Boolean get() = errorMessage != null && snapshot == null
+    val isFatalError: Boolean get() = errorMessage != null && !hasSnapshot
+
+    /** True when the snapshot on screen is not a fresh, complete read. */
+    val hasStaleData: Boolean
+        get() = hasSnapshot && (isFromCache || isSyncFailed || payloadAbsent)
 
     /**
      * The number of devices associated with the 2.4 GHz radio.
@@ -60,6 +80,10 @@ data class DashboardUiState(
  *
  * The ViewModel only reads the router through the repository; it never opens a
  * session and never touches the Android framework.
+ *
+ * On creation it first adopts the snapshot the repository already holds (the
+ * one restored from disk right after a successful login), then refreshes it.
+ * Without that first step the restored snapshot would never be shown.
  */
 class DashboardViewModel(
     private val repository: RouterRepository
@@ -69,7 +93,28 @@ class DashboardViewModel(
     val state: StateFlow<DashboardUiState> = _state.asStateFlow()
 
     init {
+        seedFromRepository()
         refresh()
+    }
+
+    /**
+     * Adopts the snapshot the repository restored after authentication.
+     *
+     * Only a connected repository is read: a cached snapshot must never be
+     * displayed before the credentials were accepted.
+     */
+    private fun seedFromRepository() {
+        val repositoryState = repository.state.value
+        if (!repositoryState.isConnected) return
+        val snapshot = repositoryState.snapshot ?: return
+
+        _state.value = _state.value.copy(
+            snapshot = snapshot,
+            lastRefreshMillis = snapshot.capturedAtMillis,
+            isFromCache = repositoryState.isShowingCachedSnapshot,
+            payloadAbsent = repositoryState.payloadAbsent,
+            hasSnapshot = true,
+        )
     }
 
     /**
@@ -79,7 +124,7 @@ class DashboardViewModel(
      * previous snapshot on screen and only flag that a refresh is running.
      */
     fun refresh() {
-        val hadSnapshot = _state.value.snapshot != null
+        val hadSnapshot = _state.value.hasSnapshot
 
         _state.value = _state.value.copy(
             isLoading = !hadSnapshot,
@@ -91,19 +136,31 @@ class DashboardViewModel(
             val result = repository.refresh()
             result
                 .onSuccess { snapshot ->
+                    // The repository keeps the previous snapshot when the
+                    // router answered without a device list. Always display
+                    // what it settled on.
+                    val effective = repository.state.value.snapshot ?: snapshot
                     _state.value = _state.value.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        snapshot = snapshot,
-                        lastRefreshMillis = snapshot.capturedAtMillis,
+                        snapshot = effective,
+                        lastRefreshMillis = effective.capturedAtMillis,
+                        payloadAbsent = snapshot.payloadAbsent,
+                        hasSnapshot = true,
+                        isFromCache = repository.state.value.isShowingCachedSnapshot,
+                        isSyncFailed = false,
                         errorMessage = null
                     )
                 }
                 .onFailure { error ->
+                    val hasSnapshot = _state.value.hasSnapshot
                     _state.value = _state.value.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        errorMessage = error.message ?: "Impossible de joindre le routeur."
+                        isSyncFailed = hasSnapshot,
+                        errorMessage = (error as? RouterUnavailableException)?.userMessage()
+                            ?: error.message
+                            ?: "Impossible de joindre le routeur."
                     )
                 }
         }

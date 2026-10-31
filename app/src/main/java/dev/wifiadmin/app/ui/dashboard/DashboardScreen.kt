@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.ui.components.CachedDataBanner
 import dev.wifiadmin.app.ui.components.ErrorState
 import dev.wifiadmin.app.ui.components.LoadingState
 import dev.wifiadmin.app.ui.components.StatCard
@@ -123,6 +124,18 @@ private fun DashboardContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (state.hasStaleData) {
+            item(key = "data-freshness") {
+                CachedDataBanner(
+                    capturedAtMillis = state.lastRefreshMillis,
+                    isFromCache = state.isFromCache,
+                    isSyncFailed = state.isSyncFailed,
+                    payloadAbsent = state.payloadAbsent,
+                    detail = state.errorMessage
+                )
+            }
+        }
+
         item(key = "summary") {
             Text(
                 text = "Appareils connus du routeur",
@@ -146,7 +159,7 @@ private fun DashboardContent(
                         accent = true
                     )
                     StatCard(
-                        label = "Wi-Fi actif",
+                        label = if (state.isFromCache) "Wi-Fi (lecture)" else "Wi-Fi actif",
                         value = active.toString(),
                         icon = Icons.Default.Wifi,
                         modifier = Modifier.weight(1f)
@@ -339,6 +352,23 @@ private fun DashboardContentPreview() {
                 lastRefreshMillis = sampleSnapshot.capturedAtMillis,
                 errorMessage = null,
                 isRefreshing = false
+            ),
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun DashboardCachedPreview() {
+    WifiAdminTheme {
+        DashboardContent(
+            state = DashboardUiState(
+                isLoading = false,
+                snapshot = sampleSnapshot,
+                lastRefreshMillis = sampleSnapshot.capturedAtMillis,
+                isFromCache = true,
+                hasSnapshot = true
             ),
             modifier = Modifier.fillMaxSize()
         )

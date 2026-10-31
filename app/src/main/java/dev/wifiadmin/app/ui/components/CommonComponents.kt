@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -23,6 +24,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -171,6 +175,74 @@ fun EmptyState(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+/**
+ * The banner shown when the data on screen is not a fresh, complete read.
+ *
+ * It is deliberately explicit: the devices were observed at the given moment,
+ * not now. In cached mode the wording is fixed by the product specification.
+ *
+ * @param capturedAtMillis when the displayed snapshot was read from the
+ *   router, or null when the date is unknown.
+ * @param isFromCache true when the snapshot was restored from disk.
+ * @param isSyncFailed true when the last synchronisation failed.
+ * @param payloadAbsent true when the router answered without a device list.
+ * @param detail the precise failure, shown as a second line when available.
+ */
+@Composable
+fun CachedDataBanner(
+    capturedAtMillis: Long?,
+    isFromCache: Boolean,
+    isSyncFailed: Boolean,
+    payloadAbsent: Boolean,
+    detail: String? = null,
+    modifier: Modifier = Modifier
+) {
+    if (!isFromCache && !isSyncFailed && !payloadAbsent) return
+
+    val message = cachedDataMessage(
+        capturedAtMillis = capturedAtMillis,
+        isFromCache = isFromCache,
+        isSyncFailed = isSyncFailed,
+        payloadAbsent = payloadAbsent
+    ) ?: return
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                if (detail != null && (isFromCache || isSyncFailed)) {
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
     }
 }
 

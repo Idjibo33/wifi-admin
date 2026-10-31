@@ -258,6 +258,15 @@ private fun LoginResultMessage(result: LoginResult) {
                 "connecté au Wi-Fi du routeur, puis réessayez.",
             isError = true
         )
+        LoginResult.Timeout -> MessageCard(
+            text = "Le routeur n'a pas répondu à temps. Vérifiez le Wi-Fi, " +
+                "puis réessayez.",
+            isError = true
+        )
+        LoginResult.SessionExpired -> MessageCard(
+            text = "Votre session a expiré. Reconnectez-vous pour continuer.",
+            isError = false
+        )
         LoginResult.UnexpectedResponse -> MessageCard(
             text = "Le routeur a répondu de façon inattendue.",
             isError = true

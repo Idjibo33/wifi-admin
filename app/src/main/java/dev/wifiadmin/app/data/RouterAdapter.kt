@@ -48,9 +48,25 @@ sealed class RouterUnavailableException(
     class Unreachable(cause: Throwable? = null) :
         RouterUnavailableException("The router is not reachable", cause)
 
-    /** The credentials were refused, or the session expired. */
+    /** The router answered too late. A timeout is not a session expiry. */
+    class Timeout(cause: Throwable? = null) :
+        RouterUnavailableException("The router did not answer in time", cause)
+
+    /** The credentials were refused by a **connection attempt**. */
     class AuthenticationFailed(cause: Throwable? = null) :
         RouterUnavailableException("The router refused the credentials", cause)
+
+    /**
+     * A session that was already open could not be renewed.
+     *
+     * This is **not** a wrong password: a refresh never carries a password.
+     * The user has to sign in again.
+     */
+    class SessionExpired(cause: Throwable? = null) :
+        RouterUnavailableException("The session expired and could not be renewed", cause)
+
+    /** A read was asked for while no session was open. Not an expiry. */
+    class NotConnected : RouterUnavailableException("No session is open")
 
     /**
      * The router is refusing logins after too many failures.

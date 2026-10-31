@@ -49,12 +49,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.ui.components.CachedDataBanner
 import dev.wifiadmin.app.ui.components.DetailRow
 import dev.wifiadmin.app.ui.components.EmptyState
 import dev.wifiadmin.app.ui.components.ErrorState
 import dev.wifiadmin.app.ui.components.LoadingState
 import dev.wifiadmin.app.ui.components.badgeColor
+import dev.wifiadmin.app.ui.components.cachedBadgeColor
+import dev.wifiadmin.app.ui.components.cachedLabel
 import dev.wifiadmin.app.ui.components.explanation
+import dev.wifiadmin.app.ui.components.formatSnapshotDate
 import dev.wifiadmin.app.ui.components.label
 import dev.wifiadmin.app.ui.theme.WifiAdminTheme
 import dev.wifiadmin.router.DevicePresence
@@ -140,7 +144,11 @@ fun DevicesScreen(
             onDismissRequest = { selectedDevice = null },
             sheetState = sheetState
         ) {
-            DeviceDetailSheet(device = device)
+            DeviceDetailSheet(
+                device = device,
+                cached = state.isFromCache,
+                capturedAtMillis = state.lastRefreshMillis
+            )
         }
     }
 }
@@ -161,6 +169,17 @@ private fun DeviceList(
             .fillMaxSize()
             .padding(horizontal = 16.dp)
     ) {
+        if (state.hasStaleData) {
+            CachedDataBanner(
+                capturedAtMillis = state.lastRefreshMillis,
+                isFromCache = state.isFromCache,
+                isSyncFailed = state.isSyncFailed,
+                payloadAbsent = state.payloadAbsent,
+                detail = state.errorMessage
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
         OutlinedTextField(
             value = state.query,
             onValueChange = onQueryChange,
@@ -205,6 +224,8 @@ private fun DeviceList(
                     // received, which is not the same as an empty network.
                     state.payloadAbsent ->
                         "Réponse du routeur vide : aucune liste d'appareils n'a été reçue."
+                    state.devices.isEmpty() && state.isFromCache ->
+                        "Aucun appareil n'était connu lors de la dernière lecture."
                     state.devices.isEmpty() ->
                         "Aucun appareil signalé par le routeur."
                     else ->
@@ -218,8 +239,12 @@ private fun DeviceList(
                 contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(items = devices, key = { it.mac }) { device ->
-                    DeviceCard(device = device, onClick = { onDeviceClick(device) })
+                items(items = devices, key = { "${it.mac}|${it.ip}" }) { device ->
+                    DeviceCard(
+                        device = device,
+                        cached = state.isFromCache,
+                        onClick = { onDeviceClick(device) }
+                    )
                 }
             }
         }
@@ -230,6 +255,7 @@ private fun DeviceList(
 @Composable
 private fun DeviceCard(
     device: RouterDevice,
+    cached: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -275,7 +301,7 @@ private fun DeviceCard(
 
             Spacer(Modifier.width(8.dp))
 
-            PresenceBadge(presence = device.presence)
+            PresenceBadge(presence = device.presence, cached = cached)
         }
     }
 }
@@ -284,15 +310,16 @@ private fun DeviceCard(
 @Composable
 private fun PresenceBadge(
     presence: DevicePresence,
+    cached: Boolean,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
-        color = presence.badgeColor()
+        color = if (cached) presence.cachedBadgeColor() else presence.badgeColor()
     ) {
         Text(
-            text = presence.label(),
+            text = if (cached) presence.cachedLabel() else presence.label(),
             style = MaterialTheme.typography.labelMedium,
             color = androidx.compose.ui.graphics.Color.White,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -309,6 +336,8 @@ private fun PresenceBadge(
 @Composable
 private fun DeviceDetailSheet(
     device: RouterDevice,
+    cached: Boolean,
+    capturedAtMillis: Long?,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -324,6 +353,19 @@ private fun DeviceDetailSheet(
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onSurface
         )
+
+        if (cached) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = formatSnapshotDate(capturedAtMillis)?.let { date ->
+                    "Données enregistrées le $date. Cet appareil n'est pas " +
+                        "nécessairement connecté maintenant."
+                } ?: "Données enregistrées. Cet appareil n'est pas " +
+                    "nécessairement connecté maintenant.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+        }
 
         Spacer(Modifier.height(4.dp))
 
@@ -364,7 +406,10 @@ private fun DeviceDetailSheet(
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
 
-        DetailRow(label = "État", value = device.presence.label())
+        DetailRow(
+            label = if (cached) "État à la lecture" else "État",
+            value = if (cached) device.presence.cachedLabel() else device.presence.label()
+        )
 
         Text(
             text = device.presence.explanation(),
@@ -438,9 +483,48 @@ private fun DeviceListPreview() {
 
 @Preview(showBackground = true)
 @Composable
+private fun DeviceListCachedPreview() {
+    WifiAdminTheme {
+        DeviceList(
+            state = DevicesUiState(
+                isLoading = false,
+                devices = sampleDevices,
+                query = "",
+                filter = DeviceFilter.ALL,
+                lastRefreshMillis = 1_700_000_000_000L,
+                errorMessage = null,
+                isFromCache = true,
+                hasSnapshot = true
+            ),
+            onQueryChange = {},
+            onFilterChange = {},
+            onDeviceClick = {},
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
 private fun DeviceDetailPreview() {
     WifiAdminTheme {
-        DeviceDetailSheet(device = sampleDevices.first())
+        DeviceDetailSheet(
+            device = sampleDevices.first(),
+            cached = false,
+            capturedAtMillis = null
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun DeviceDetailCachedPreview() {
+    WifiAdminTheme {
+        DeviceDetailSheet(
+            device = sampleDevices.first(),
+            cached = true,
+            capturedAtMillis = 1_700_000_000_000L
+        )
     }
 }
 

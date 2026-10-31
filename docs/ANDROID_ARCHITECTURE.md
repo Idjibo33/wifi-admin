@@ -72,16 +72,22 @@ le **seul** endroit de l'application qui parle au protocole.
 
 Les exceptions du protocole (`RouterNetworkException`,
 `RouterAuthenticationException`, `RouterProtocolException`) sont converties en
-`RouterUnavailableException`, une hiérarchie de trois cas que l'interface
+`RouterUnavailableException`, une hiérarchie de cas distincts que l'interface
 utilisateur comprend :
 
 | Exception | Signification pour l'utilisateur |
 |---|---|
-| `Unreachable` | Le routeur est injoignable. |
-| `AuthenticationFailed` | Identifiants refusés, ou session expirée. |
+| `Unreachable` | Le routeur est injoignable (mauvaise adresse, Wi-Fi perdu, routeur éteint). |
+| `Timeout` | Le routeur n'a pas répondu à temps. **Ce n'est pas une expiration.** |
+| `AuthenticationFailed` | Identifiants refusés lors d'une **tentative de connexion**. |
+| `SessionExpired` | Une session déjà ouverte n'a pas pu être renouvelée. **Ce n'est pas un mauvais mot de passe.** |
+| `NotConnected` | Une lecture a été demandée sans session ouverte. |
+| `Cooldown` | Le routeur refuse temporairement les connexions (gel de 180 s). |
 | `UnexpectedResponse` | Le routeur a répondu quelque chose d'inattendu. |
 
-Les écrans n'ont jamais à connaître le protocole.
+Les écrans n'ont jamais à connaître le protocole. Une erreur réseau ne devient
+**jamais** une expiration de session : seul `SessionExpired` déclenche le
+retour à l'écran de connexion.
 
 ---
 
@@ -90,23 +96,33 @@ Les écrans n'ont jamais à connaître le protocole.
 Le repository est la source de vérité unique :
 
 ```kotlin
-class RouterRepository(private val adapter: RouterAdapter = ZltRouterAdapter()) {
+class RouterRepository(
+    private val adapter: RouterAdapter = ZltRouterAdapter(),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val snapshotStore: SnapshotStorage? = null,
+) {
     val state: StateFlow<RouterUiState>
     suspend fun connect(host, username, password): Boolean
     suspend fun refresh(): Result<DeviceSnapshot>
-    fun disconnect()
+    suspend fun disconnect()
 }
 ```
 
 Il porte :
 
-- l'**état de connexion** (`Disconnected`, `Connecting`, `Connected`, `Error`) ;
-- le **dernier instantané** des appareils ;
+- l'**état de connexion** (`Disconnected`, `Connecting`, `Connected`,
+  `SessionExpired`, `Cooldown`, `Error`) ;
+- le **dernier instantané** des appareils et son origine (`NONE`, `LIVE`,
+  `CACHE`) ;
 - l'**erreur** éventuelle ;
-- l'**horodatage** de la dernière actualisation.
+- l'**horodatage** de la dernière actualisation ;
+- l'indicateur de **réponse incomplète** (`payloadAbsent`).
 
 Un `Mutex` sérialise les opérations : deux rafraîchissements simultanés ne
-peuvent pas se chevaucher, ce qui éviterait deux sessions concurrentes.
+peuvent pas se chevaucher, ce qui éviterait deux sessions concurrentes. Un
+compteur de **génération** invalide les résultats qui ont commencé avant une
+déconnexion ou une expiration : une réponse ancienne ne peut pas ressusciter
+une session morte.
 
 ### Le réseau ne doit jamais tourner sur le thread principal
 
@@ -307,13 +323,15 @@ pas disponible sur ce firmware. Le tableau de bord affiche une notice
 explicite qui distingue deux choses que l'utilisateur pourrait confondre :
 
 1. le **filtrage MAC Wi-Fi** (`cmd 278`) — refusé par le firmware
-   (`LIMITED_ACCESS`), il empêche l'**association** Wi-Fi ;
+   (`LIMITED_ACCESS`), il empêcherait l'**association** Wi-Fi ;
 2. le **blocage d'accès à Internet** — qui relève du **pare-feu**
-   (`cmd 23`), un mécanisme distinct dont l'effet n'est pas vérifié.
+   (`cmd 23`), un mécanisme distinct, lui aussi **`UNAVAILABLE`** sur ce
+   firmware (clôture du 30/10/2026, voir `FIREWALL_ANALYSIS.md` §13ter).
 
-L'application ne prétend donc **jamais** qu'un appareil « non bloqué » est
-accès à Internet. Un appareil bloqué côté Internet resterait d'ailleurs
-**visible et connecté** dans la liste.
+L'application ne prétend donc **jamais** qu'un appareil « non bloqué » a accès
+à Internet. Aucun bouton Bloquer/Débloquer n'existe : l'interface Compose
+livrée (tableau de bord, appareils, réglages) est en **lecture seule**, et
+l'interface de blocage est **exclue du périmètre**.
 
 ---
 
@@ -321,24 +339,135 @@ accès à Internet. Un appareil bloqué côté Internet resterait d'ailleurs
 
 | Couche | Ce qui est testé |
 |---|---|
-| `router-core` (87) | Le protocole : authentification, expiration de session, fusion DHCP/Wi-Fi, classification, filtre Wi-Fi, frontière lecture seule. |
-| `poc-cli` (16) | Les rendus console / JSON / diagnostic et l'absence de fuite de données. |
-| `app` (19) | Les ViewModels : connexion, résultats d'erreur, recherche, filtres, état de chargement. |
+| `router-core` (183) | Le protocole : authentification, expiration de session, fusion DHCP/Wi-Fi, classification, filtre Wi-Fi, frontière lecture seule. |
+| `poc-cli` (56) | Les rendus console / JSON / diagnostic et l'absence de fuite de données. |
+| `app` (89) | Les ViewModels, la navigation d'expiration, le cache local (`SnapshotStore`), la restauration, la non-régression et la frontière d'architecture. |
 
 **Aucun test n'atteint le routeur réel.** Le transport est soit factice
 (`FakeRouter`), soit un serveur HTTP local sur `127.0.0.1`.
 
 Les tests du module `app` utilisent un `FakeAdapter` implémentant
 `RouterAdapter` : ils valident le comportement de l'interface sans jamais
-toucher au protocole.
+toucher au protocole. Les tests du cache utilisent un répertoire temporaire et
+une horloge injectable : aucun fichier réel de l'application n'est touché.
+
+Total : **328 tests**, 0 échec (mission 08).
 
 ---
 
-## 9. Ce qui reste à faire
+## 9. Dernier instantané et expiration de session
+
+### 9.1 `SnapshotStore`
+
+Le dernier état valide des appareils est conservé dans un **fichier JSON
+unique** :
+
+```text
+context.noBackupFilesDir/last-device-snapshot.json
+```
+
+`noBackupFilesDir` est exclu de la sauvegarde cloud et du transfert
+d'appareil à appareil par le framework Android. `android:allowBackup="false"`
+dans le manifeste est une seconde barrière. Le fichier n'est jamais lisible par
+une autre application.
+
+Le format est versionné (`schema`, `schemaVersion`), avec une **liste blanche
+de clés** : mot de passe, jeton, `sessionId`, challenge et cookies ne peuvent
+pas y entrer, même par erreur. Les champs autorisés sont uniquement ceux de
+`RouterDevice` (MAC, IP, nom, bandes, signal, interface, bail DHCP, IPv6,
+présence) plus l'hôte et le compte.
+
+| Contrainte | Valeur |
+|---|---|
+| Taille maximale du fichier | 512 Kio |
+| Nombre maximal d'appareils | 256 |
+| Longueur maximale d'un champ | 256 caractères (MAC : 64) |
+| Profondeur JSON maximale | 32 |
+| Tolérance d'horloge future | 5 minutes |
+
+Écriture **atomique** : fichier temporaire, `flush`, `fsync`, puis
+`Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)`. Un lecteur voit toujours
+l'ancien document complet ou le nouveau, jamais un fichier tronqué. Un échec
+d'écriture laisse l'ancien fichier intact et ne fait pas échouer un
+rafraîchissement réussi.
+
+Un fichier absent, corrompu, tronqué, trop gros, daté du futur ou d'une version
+inconnue est **rejeté et supprimé** : l'application ne « répare » jamais
+silencieusement une donnée qu'elle ne comprend pas.
+
+### 9.2 Cycle de vie
+
+| Moment | Mémoire | Disque |
+|---|---|---|
+| Lecture réussie (`payloadAbsent = false`) | remplacée | écrite |
+| Réponse sans liste (`payloadAbsent = true`) | instantané précédent conservé | **jamais écrite** |
+| Échec réseau / timeout / cooldown | instantané conservé | conservé |
+| Expiration de session | **vidée** | **conservé** |
+| Déconnexion volontaire | vidée | **supprimé** |
+| Changement d'hôte ou de compte | non restauré | **supprimé** |
+
+La restauration n'a lieu qu'**après** l'acceptation des identifiants par le
+routeur, et seulement si l'hôte et le compte correspondent. Un instantané d'un
+autre routeur ou d'un autre compte est supprimé, jamais affiché.
+
+Une lecture plus ancienne qu'un instantané déjà stocké ne l'écrase pas
+(`OLDER_THAN_STORED`).
+
+### 9.3 Affichage du cache
+
+Après authentification, le dernier instantané est affiché immédiatement, puis
+remplacé par la première lecture réussie. Tant qu'il est affiché, un bandeau
+indique :
+
+> **Dernières données connues — actualisées le [date et heure].**
+
+En mode cache, aucun appareil n'est présenté comme actuellement connecté :
+les badges deviennent neutres et disent « Vu actif » / « Vu filaire », et le
+compteur « Wi-Fi actif » devient « Wi-Fi (lecture) ». La fiche détail rappelle
+la date d'enregistrement.
+
+### 9.4 Expiration de session
+
+Le client `router-core` tente **une seule fois** de renouveler une session
+expirée (`NO_AUTH` / `LOGIN_TIMEOUT`) avant de lever
+`RouterAuthenticationException`. Comme une lecture ne porte **aucun mot de
+passe**, cette exception ne peut pas être un mauvais mot de passe : l'adaptateur
+la traduit en `SessionExpired`.
+
+Sur expiration confirmée :
+
+1. les lectures suivantes sont refusées sans appel réseau ;
+2. la session et l'instantané en mémoire sont invalidés ;
+3. la navigation revient à la connexion en vidant toute la pile
+   (`popUpTo(graph.id) { inclusive = true }`) : le bouton Retour ne peut pas
+   rouvrir un écran authentifié ;
+4. le message exact est affiché :
+   **« Votre session a expiré. Reconnectez-vous pour continuer. »** ;
+5. la reconnexion reste **manuelle**.
+
+Un `LaunchedEffect` unique, keyé sur l'état de connexion, applique la règle
+`shouldReturnToLogin` : elle ne se déclenche que pour `SessionExpired` et
+jamais lorsque l'écran de connexion est déjà affiché. Aucune boucle de
+reconnexion automatique n'existe.
+
+| Situation | État | Navigation |
+|---|---|---|
+| Session non renouvelable | `SessionExpired` | retour à la connexion |
+| Mauvais identifiants (connexion) | `Error(AuthenticationFailed)` | reste sur la connexion |
+| Routeur injoignable | `Error(Unreachable)` | aucune |
+| Timeout | `Error(Timeout)` | aucune |
+| Gel temporaire (180 s) | `Cooldown` | aucune |
+| Réponse malformée | `Error(UnexpectedResponse)` | aucune |
+| Perte du Wi-Fi | `Error(Unreachable)` | aucune |
+
+---
+
+## 10. Ce qui reste à faire
 
 | Sujet | État |
 |---|---|
 | Filtrage **pare-feu** (`cmd 23`) | **`UNAVAILABLE` sur ce firmware** (clôture du 30/10/2026). L'interface officielle reçoit la même réponse creuse que nous. Aucune intégration ne sera faite. Voir `FIREWALL_ANALYSIS.md` §13ter. |
 | Persistance du mot de passe via Keystore | Non implémentée — volontairement absente pour l'instant. |
 | Support d'autres routeurs | L'architecture est prête (interface `RouterAdapter`), mais aucun second adaptateur n'existe. |
-| Interface Compose | **Hors périmètre** : aucun bouton de blocage, la capacité n'existe pas sur ce firmware. |
+| Interface Compose livrée | **Existante** : tableau de bord, liste des appareils, réglages, connexion. Aucun changement de périmètre. |
+| Interface de blocage (bouton Bloquer/Débloquer) | **Exclue** : la capacité est `UNAVAILABLE`, aucun bouton n'est exposé. |

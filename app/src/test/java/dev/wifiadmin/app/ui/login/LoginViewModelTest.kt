@@ -194,4 +194,58 @@ class LoginViewModelTest {
         assertTrue(repository.state.value.isConnected)
         assertEquals(ConnectionState.Connected, repository.state.value.connection)
     }
+
+    @Test
+    fun `a timeout at connection is reported as a timeout`() = runTest(dispatcher) {
+        val adapter = FakeAdapter(error = RouterUnavailableException.Timeout(null))
+        val vm = LoginViewModel(testRepository(adapter))
+
+        vm.connect("192.168.1.1", "admin", "secret")
+        advanceUntilIdle()
+
+        assertEquals(LoginResult.Timeout, vm.result.value)
+    }
+
+    @Test
+    fun `an expired session is reported when the login screen is created`() = runTest(dispatcher) {
+        val repository = expiredRepository()
+
+        val vm = LoginViewModel(repository)
+
+        assertEquals(LoginResult.SessionExpired, vm.result.value)
+    }
+
+    @Test
+    fun `a manual reconnection after an expiry succeeds`() = runTest(dispatcher) {
+        val repository = expiredRepository()
+        val vm = LoginViewModel(repository)
+
+        vm.connect("192.168.1.1", "admin", "secret")
+        advanceUntilIdle()
+
+        assertEquals(LoginResult.Success, vm.result.value)
+        assertTrue(repository.state.value.isConnected)
+    }
+
+    /** A repository whose session expired during a refresh. */
+    private suspend fun expiredRepository(): RouterRepository {
+        val adapter = object : RouterAdapter {
+            override val displayName = "Fake"
+
+            override suspend fun connect(
+                host: String,
+                username: String,
+                password: String
+            ): Boolean = true
+
+            override suspend fun fetchDevices(): DeviceSnapshot =
+                throw RouterUnavailableException.SessionExpired()
+
+            override fun disconnect() = Unit
+        }
+        val repository = RouterRepository(adapter, dispatcher)
+        repository.connect("192.168.1.1", "admin", "secret")
+        repository.refresh()
+        return repository
+    }
 }

@@ -41,14 +41,15 @@ class DevicesPayloadAbsenceTest {
 
     @Test
     fun `an absent payload is reported as such`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(
-            RouterRepository(
-                adapter = FakeAdapter(
-                    DeviceSnapshot(emptyList(), payloadAbsent = true)
-                ),
-                ioDispatcher = dispatcher,
-            )
+        val repository = RouterRepository(
+            adapter = FakeAdapter(
+                DeviceSnapshot(emptyList(), payloadAbsent = true)
+            ),
+            ioDispatcher = dispatcher,
         )
+        repository.connect("192.168.1.1", "admin", "secret")
+
+        val vm = DevicesViewModel(repository)
 
         vm.refresh()
         advanceUntilIdle()
@@ -58,14 +59,15 @@ class DevicesPayloadAbsenceTest {
 
     @Test
     fun `a present payload is not reported as absent`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(
-            RouterRepository(
-                adapter = FakeAdapter(
-                    DeviceSnapshot(emptyList(), payloadAbsent = false)
-                ),
-                ioDispatcher = dispatcher,
-            )
+        val repository = RouterRepository(
+            adapter = FakeAdapter(
+                DeviceSnapshot(emptyList(), payloadAbsent = false)
+            ),
+            ioDispatcher = dispatcher,
         )
+        repository.connect("192.168.1.1", "admin", "secret")
+
+        val vm = DevicesViewModel(repository)
 
         vm.refresh()
         advanceUntilIdle()
