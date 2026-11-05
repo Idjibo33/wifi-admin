@@ -45,7 +45,9 @@ fun shouldReturnToLogin(
  * malformed reply keep the user where they are, with the last known data:
  * the Mission 08 specification says an error network is never an expiry.
  * [ConnectionState.Cooldown] keeps the session, which is merely unable to
- * renew for a while.
+ * renew for a while, and [ConnectionState.NetworkChanged] **suspends** the
+ * reads without ending the session: the user may come back to the right
+ * network, and the last known devices stay on screen.
  */
 fun shouldLeaveProtectedScreen(
     connection: ConnectionState,

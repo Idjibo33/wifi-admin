@@ -1,7 +1,9 @@
 package dev.wifiadmin.app.ui.devices
 
 import dev.wifiadmin.app.data.ConnectionState
+import dev.wifiadmin.app.data.ReadFreshnessPolicy
 import dev.wifiadmin.app.data.RouterAdapter
+import dev.wifiadmin.app.data.TestHarness
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.router.DeviceSnapshot
 import kotlinx.coroutines.Dispatchers
@@ -46,10 +48,12 @@ class DevicesPayloadAbsenceTest {
                 DeviceSnapshot(emptyList(), payloadAbsent = true)
             ),
             ioDispatcher = dispatcher,
+            // Every read reaches the adapter.
+            freshness = ReadFreshnessPolicy { false },
         )
         repository.connect("192.168.1.1", "admin", "secret")
 
-        val vm = DevicesViewModel(repository)
+        val vm = DevicesViewModel(repository, TestHarness.coordinator(repository, this))
 
         vm.refresh()
         advanceUntilIdle()
@@ -64,10 +68,12 @@ class DevicesPayloadAbsenceTest {
                 DeviceSnapshot(emptyList(), payloadAbsent = false)
             ),
             ioDispatcher = dispatcher,
+            // Every read reaches the adapter.
+            freshness = ReadFreshnessPolicy { false },
         )
         repository.connect("192.168.1.1", "admin", "secret")
 
-        val vm = DevicesViewModel(repository)
+        val vm = DevicesViewModel(repository, TestHarness.coordinator(repository, this))
 
         vm.refresh()
         advanceUntilIdle()

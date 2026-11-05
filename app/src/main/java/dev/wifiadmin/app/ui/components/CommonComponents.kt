@@ -182,32 +182,22 @@ fun EmptyState(
  * The banner shown when the data on screen is not a fresh, complete read.
  *
  * It is deliberately explicit: the devices were observed at the given moment,
- * not now. In cached mode the wording is fixed by the product specification.
+ * not now. The reason is part of the wording, because a lost router, a lost
+ * network and a failed synchronisation are three different situations.
  *
  * @param capturedAtMillis when the displayed snapshot was read from the
  *   router, or null when the date is unknown.
- * @param isFromCache true when the snapshot was restored from disk.
- * @param isSyncFailed true when the last synchronisation failed.
- * @param payloadAbsent true when the router answered without a device list.
+ * @param reason why the data is not fresh.
  * @param detail the precise failure, shown as a second line when available.
  */
 @Composable
 fun CachedDataBanner(
     capturedAtMillis: Long?,
-    isFromCache: Boolean,
-    isSyncFailed: Boolean,
-    payloadAbsent: Boolean,
+    reason: StaleDataReason,
     detail: String? = null,
     modifier: Modifier = Modifier
 ) {
-    if (!isFromCache && !isSyncFailed && !payloadAbsent) return
-
-    val message = cachedDataMessage(
-        capturedAtMillis = capturedAtMillis,
-        isFromCache = isFromCache,
-        isSyncFailed = isSyncFailed,
-        payloadAbsent = payloadAbsent
-    ) ?: return
+    val message = staleDataMessage(reason, capturedAtMillis)
 
     Card(
         modifier = modifier
@@ -234,7 +224,7 @@ fun CachedDataBanner(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
-                if (detail != null && (isFromCache || isSyncFailed)) {
+                if (detail != null && reason != StaleDataReason.NETWORK_CHANGED) {
                     Text(
                         text = detail,
                         style = MaterialTheme.typography.bodySmall,

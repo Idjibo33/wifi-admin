@@ -13,19 +13,17 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * The wording of the cached-data banner is part of the product contract: the
- * exact sentence must not drift, and a cached device must never be labelled as
+ * The wording of the banners is part of the product contract: the exact
+ * sentence must not drift, and a cached device must never be labelled as
  * currently connected.
  */
 class PresentationTest {
 
     @Test
     fun `the cached banner uses the exact product sentence`() {
-        val message = cachedDataMessage(
+        val message = staleDataMessage(
+            reason = StaleDataReason.CACHE,
             capturedAtMillis = CAPTURED_AT,
-            isFromCache = true,
-            isSyncFailed = false,
-            payloadAbsent = false,
         )
 
         val expectedDate = SimpleDateFormat("dd/MM/yyyy 'à' HH:mm", Locale.FRANCE)
@@ -40,43 +38,46 @@ class PresentationTest {
     fun `the cached banner handles an unknown date`() {
         assertEquals(
             "Dernières données connues — date d'actualisation inconnue.",
-            cachedDataMessage(null, isFromCache = true, isSyncFailed = false, payloadAbsent = false)
+            staleDataMessage(StaleDataReason.CACHE, null)
         )
     }
 
     @Test
-    fun `a sync failure with live data names the last known data`() {
-        val message = cachedDataMessage(
-            capturedAtMillis = CAPTURED_AT,
-            isFromCache = false,
-            isSyncFailed = true,
-            payloadAbsent = false,
-        )
+    fun `a sync failure names the last known data`() {
+        val message = staleDataMessage(StaleDataReason.SYNC_FAILED, CAPTURED_AT)
 
-        assertTrue(message!!.startsWith("Synchronisation impossible"))
+        assertTrue(message.startsWith("Synchronisation impossible"))
     }
 
     @Test
     fun `an incomplete reply is reported as such`() {
-        val message = cachedDataMessage(
-            capturedAtMillis = CAPTURED_AT,
-            isFromCache = false,
-            isSyncFailed = false,
-            payloadAbsent = true,
-        )
+        val message = staleDataMessage(StaleDataReason.INCOMPLETE_REPLY, CAPTURED_AT)
 
-        assertTrue(message!!.startsWith("Réponse incomplète du routeur"))
+        assertTrue(message.startsWith("Réponse incomplète du routeur"))
     }
 
     @Test
-    fun `fresh data has no banner`() {
-        assertNull(
-            cachedDataMessage(
-                capturedAtMillis = CAPTURED_AT,
-                isFromCache = false,
-                isSyncFailed = false,
-                payloadAbsent = false,
-            )
+    fun `a network change has its own wording`() {
+        val message = staleDataMessage(StaleDataReason.NETWORK_CHANGED, CAPTURED_AT)
+
+        assertEquals(NETWORK_CHANGED_MESSAGE, message)
+        assertNotEquals(
+            "a changed network is not an expired session",
+            EXPIRY_MESSAGE,
+            message
+        )
+    }
+
+    @Test
+    fun `the four reasons are told apart`() {
+        val messages = StaleDataReason.entries.map {
+            staleDataMessage(it, CAPTURED_AT)
+        }
+
+        assertEquals(
+            "each reason must have its own wording",
+            messages.size,
+            messages.toSet().size
         )
     }
 
@@ -99,7 +100,7 @@ class PresentationTest {
         val timeout = RouterUnavailableException.Timeout().userMessage()
         val expired = RouterUnavailableException.SessionExpired().userMessage()
 
-        assertEquals("Votre session a expiré. Reconnectez-vous pour continuer.", expired)
+        assertEquals(EXPIRY_MESSAGE, expired)
         assertNotEquals(timeout, expired)
     }
 
@@ -108,6 +109,42 @@ class PresentationTest {
         val message = RouterUnavailableException.Unreachable().userMessage()
 
         assertFalse(message.contains("expiré"))
+    }
+
+    @Test
+    fun `a timeout is not presented as an expiry either`() {
+        val message = RouterUnavailableException.Timeout().userMessage()
+
+        assertFalse(message.contains("expiré"))
+        assertFalse(message.contains("Le réseau a changé"))
+    }
+
+    @Test
+    fun `a malformed response is not presented as an expiry`() {
+        val message = RouterUnavailableException.UnexpectedResponse().userMessage()
+
+        assertFalse(message.contains("expiré"))
+    }
+
+    @Test
+    fun `the expiry message is never empty`() {
+        assertTrue(EXPIRY_MESSAGE.isNotBlank())
+        assertTrue(NETWORK_CHANGED_MESSAGE.isNotBlank())
+    }
+
+    @Test
+    fun `the format of the snapshot date is the French one`() {
+        val formatted = formatSnapshotDate(CAPTURED_AT)
+
+        assertTrue(
+            "the date must be written as dd/MM/yyyy, was: $formatted",
+            formatted != null && formatted.matches(Regex("""\d{2}/\d{2}/\d{4} à \d{2}:\d{2}"""))
+        )
+    }
+
+    @Test
+    fun `an unknown date has no formatted value`() {
+        assertNull(formatSnapshotDate(null))
     }
 
     companion object {

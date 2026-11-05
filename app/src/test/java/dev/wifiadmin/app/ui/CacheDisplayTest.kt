@@ -1,6 +1,8 @@
 package dev.wifiadmin.app.ui
 
+import dev.wifiadmin.app.data.RefreshCoordinator
 import dev.wifiadmin.app.data.RouterAdapter
+import dev.wifiadmin.app.data.TestHarness
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.RouterUnavailableException
 import dev.wifiadmin.app.data.SnapshotContext
@@ -12,10 +14,12 @@ import dev.wifiadmin.router.DeviceSignal
 import dev.wifiadmin.router.DeviceSnapshot
 import dev.wifiadmin.router.RouterDevice
 import dev.wifiadmin.router.WifiBand
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -59,6 +63,27 @@ class CacheDisplayTest {
 
     private fun store() = SnapshotStore(file) { CAPTURED_AT + 60_000L }
 
+    /**
+     * A coordinator on the repository, for the screen to drive.
+     */
+    private fun coordinator(
+        repository: RouterRepository,
+        scope: CoroutineScope,
+    ): RefreshCoordinator = TestHarness.coordinator(repository, scope)
+
+    /**
+     * Runs the polling once, then stops it.
+     *
+     * The polling loop never ends on its own: the test stops it once the
+     * read has settled.
+     */
+    private suspend fun TestScope.runPollingOnce(coordinator: RefreshCoordinator) {
+        coordinator.startPolling()
+        runCurrent()
+        coordinator.stopPolling()
+    }
+
+
     private fun device() = RouterDevice(
         mac = "aa:bb:cc:dd:ee:01",
         ip = "192.168.1.10",
@@ -97,7 +122,7 @@ class CacheDisplayTest {
                 FakeAdapter { throw RouterUnavailableException.Unreachable() }
             )
 
-            val viewModel = DashboardViewModel(repository)
+            val viewModel = DashboardViewModel(repository, coordinator(repository, this))
 
             assertEquals(snapshot(), viewModel.state.value.snapshot)
             assertTrue(viewModel.state.value.isFromCache)
@@ -110,9 +135,10 @@ class CacheDisplayTest {
         val repository = cachedRepository(
             FakeAdapter { throw RouterUnavailableException.Unreachable() }
         )
-        val viewModel = DashboardViewModel(repository)
+        val coordinator = coordinator(repository, this)
+        val viewModel = DashboardViewModel(repository, coordinator)
 
-        advanceUntilIdle()
+        runPollingOnce(coordinator)
 
         assertEquals(snapshot(), viewModel.state.value.snapshot)
         assertTrue(viewModel.state.value.isFromCache)
@@ -124,9 +150,10 @@ class CacheDisplayTest {
     fun `the dashboard drops the cache label after a live read`() = runTest(dispatcher) {
         val fresh = DeviceSnapshot(listOf(device()), capturedAtMillis = CAPTURED_AT + 30_000L)
         val repository = cachedRepository(FakeAdapter { fresh })
-        val viewModel = DashboardViewModel(repository)
+        val coordinator = coordinator(repository, this)
+        val viewModel = DashboardViewModel(repository, coordinator)
 
-        advanceUntilIdle()
+        runPollingOnce(coordinator)
 
         assertEquals(fresh, viewModel.state.value.snapshot)
         assertFalse(viewModel.state.value.isFromCache)
@@ -141,7 +168,7 @@ class CacheDisplayTest {
                 FakeAdapter { throw RouterUnavailableException.Unreachable() }
             )
 
-            val viewModel = DevicesViewModel(repository)
+            val viewModel = DevicesViewModel(repository, coordinator(repository, this))
 
             assertEquals(1, viewModel.state.value.devices.size)
             assertTrue(viewModel.state.value.isFromCache)
@@ -153,9 +180,10 @@ class CacheDisplayTest {
         val repository = cachedRepository(
             FakeAdapter { throw RouterUnavailableException.Unreachable() }
         )
-        val viewModel = DevicesViewModel(repository)
+        val coordinator = coordinator(repository, this)
+        val viewModel = DevicesViewModel(repository, coordinator)
 
-        advanceUntilIdle()
+        runPollingOnce(coordinator)
 
         assertEquals(1, viewModel.state.value.devices.size)
         assertTrue(viewModel.state.value.isFromCache)
@@ -167,9 +195,10 @@ class CacheDisplayTest {
         val repository = cachedRepository(
             FakeAdapter { DeviceSnapshot(emptyList(), payloadAbsent = true) }
         )
-        val viewModel = DevicesViewModel(repository)
+        val coordinator = coordinator(repository, this)
+        val viewModel = DevicesViewModel(repository, coordinator)
 
-        advanceUntilIdle()
+        runPollingOnce(coordinator)
 
         assertEquals("cached devices must survive an absent payload", 1, viewModel.state.value.devices.size)
         assertTrue(viewModel.state.value.payloadAbsent)

@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.wifiadmin.app.ui.components.CachedDataBanner
 import dev.wifiadmin.app.ui.components.DetailRow
@@ -81,6 +82,17 @@ fun DevicesScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var selectedDevice by remember { mutableStateOf<RouterDevice?>(null) }
+
+    // The refresh follows the visibility of the screen: it runs while the
+    // screen is in the foreground and stops as soon as it is not.
+    //
+    // The block is keyed on `Unit`: a recomposition never restarts it, and
+    // `onStopOrDispose` is called on every exit from the STARTED state and
+    // when the screen leaves the composition.
+    LifecycleStartEffect(Unit) {
+        viewModel.startPolling()
+        onStopOrDispose { viewModel.stopPolling() }
+    }
 
     Scaffold(
         modifier = modifier,
@@ -170,13 +182,13 @@ private fun DeviceList(
             .padding(horizontal = 16.dp)
     ) {
         if (state.hasStaleData) {
-            CachedDataBanner(
-                capturedAtMillis = state.lastRefreshMillis,
-                isFromCache = state.isFromCache,
-                isSyncFailed = state.isSyncFailed,
-                payloadAbsent = state.payloadAbsent,
-                detail = state.errorMessage
-            )
+            state.staleDataReason?.let { reason ->
+                CachedDataBanner(
+                    capturedAtMillis = state.lastRefreshMillis,
+                    reason = reason,
+                    detail = state.errorMessage
+                )
+            }
             Spacer(Modifier.height(8.dp))
         }
 

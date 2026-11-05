@@ -28,10 +28,16 @@ class WifiAdminViewModelFactory(
             ) as T
 
         modelClass.isAssignableFrom(DashboardViewModel::class.java) ->
-            DashboardViewModel(container.routerRepository) as T
+            DashboardViewModel(
+                container.routerRepository,
+                container.refreshCoordinator,
+            ) as T
 
         modelClass.isAssignableFrom(DevicesViewModel::class.java) ->
-            DevicesViewModel(container.routerRepository) as T
+            DevicesViewModel(
+                container.routerRepository,
+                container.refreshCoordinator,
+            ) as T
 
         modelClass.isAssignableFrom(SettingsViewModel::class.java) ->
             SettingsViewModel(container.routerRepository, container.settingsStore) as T

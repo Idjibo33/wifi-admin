@@ -1151,3 +1151,70 @@ Scénarios hors ligne : pare-feu **10/10**, expiration **3/3**, aucune écriture
 **Mission 08 validée.** Le bouton Retour et le rendu du message restent à
 constater visuellement sur le téléphone : ce sont des propriétés du framework
 Android, hors de portée d'un test JVM. La Mission 09 n'est pas commencée.
+
+---
+
+## 20. Mission 09 — rafraîchissement automatique et changements de réseau (05/11/2026)
+
+### 20.1 Objectif
+
+Rafraîchir les données toutes les **30 secondes** tant que l'écran
+concerné est visible, et détecter la perte du réseau local ou le passage à
+un autre réseau, **sans élargir le périmètre** et sans jamais écrire sur le
+routeur.
+
+### 20.2 Décisions
+
+| Sujet | Décision | Justification |
+|---|---|---|
+| Primitive de visibilité | `LifecycleStartEffect(Unit)` + `startPolling()` / `stopPolling()` idempotents | La Compose connaît le cycle de vie ; le ViewModel n'a pas à le connaître. Clé `Unit` : une recomposition ne relance rien. |
+| Boucle de 30 s | **Une seule**, dans `RefreshCoordinator` (instance unique de `AppContainer`) | Un ViewModel est recréé au changement d'onglet : son minuteur repartirait de zéro. |
+| Mutualisation | `ReadCoordinator` : **un seul `Deferred` en vol** | Le `Mutex` sérialise sans mutualiser. Le verrou du repository a été **sorti** du chemin de la lecture, sinon la mutualisation serait silencieusement cassée. |
+| Fraîcheur | `ReadFreshnessPolicy` (fonction pure) | Une lecture réussie de moins de 25 s est réutilisée. |
+| Back-off | 30 s → 60 s → 120 s → 300 s | Un routeur éteint n'est pas pilonné. |
+| Cooldown | Suspend le rafraîchissement pendant la pénalité annoncée | Interroger un routeur qui refuse les logins aggrave le refus. |
+| Horloges | `AppClock` : monotone pour les délais, civile pour les étiquettes | Un changement de date ne peut pas casser la période. |
+| Réseau | `NetworkMonitor` sur `TRANSPORT_WIFI`, sans `VALIDATED` | Un Wi-Fi local **sans Internet** reste utilisable. |
+| Identité réseau | `NetworkIdentity` (interface + plage + passerelle) dans le `SnapshotContext` | `admin` + `192.168.1.1` est le défaut de **tout** routeur domestique : sans cela, le cache d'un routeur serait affiché pour un autre. |
+| SSID / BSSID | **Jamais lus** | Ils exigent `ACCESS_FINE_LOCATION`, que l'application ne demande pas. |
+| Changement de réseau | `ConnectionState.NetworkChanged`, **distinct** de `SessionExpired` | Un changement de réseau n'est **pas** une expiration : la session est suspendue, les dernières données restent à l'écran, aucune navigation. |
+| Déconnexion | L'état est réinitialisé **avant** le nettoyage, sans attendre le verrou | Une lecture en vol bloquait l'interface jusqu'à 8 s (deux timeouts de 4 s). |
+
+### 20.3 Défauts trouvés par les sous-agents et corrigés
+
+| # | Défaut | Gravité | Correction |
+|---|---|---|---|
+| 1 | Le cache pouvait être restauré pour **un autre routeur** (même `192.168.1.1`, même `admin`) | 🔴 Critique | Identité réseau ajoutée au `SnapshotContext`. |
+| 2 | Un `OkHttpClient` (pool de connexions + de threads) était créé **par requête** | 🔴 Critique | Les clients sont partagés : 8 640/jour avec le rafraîchissement. |
+| 3 | `disconnect()` attendait la lecture en vol : interface figée jusqu'à 8 s | 🟠 Moyen | L'état est réinitialisé avant le nettoyage, sans prendre le verrou. |
+| 4 | Le rafraîchissement pouvait doubler le trafic (une boucle par écran) | 🟠 Moyen | Un coordinateur unique + lecture dédupliquée. |
+| 5 | Un cooldown pouvait être martelé par le rafraîchissement | 🟠 Moyen | La pénalité suspend la boucle. |
+| 6 | Les lectures passaient pendant l'état `NetworkChanged` | 🟡 Mineur | Elles sont suspendues. |
+| 7 | Le callback réseau dupliqué entre le resolver et le moniteur | 🟡 Mineur | Le resolver consomme le moniteur. |
+
+### 20.4 Tests
+
+| Suite | Tests | Échecs |
+|---|---:|---:|
+| `router-core` | **193** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **189** | 0 |
+| **Total** | **438** | **0** |
+
+Scénarios hors ligne : pare-feu **10/10**, expiration **3/3**, aucune écriture.
+
+Tests ajoutés : `RefreshCoordinatorTest` (11), `ReadCoordinatorTest` (8),
+`NetworkChangeTest` (13), `PollingInvariantsTest` (15),
+`Mission09BoundaryTest` (10).
+
+### 20.5 Livrables
+
+- `docs/MISSION_09_VALIDATION.md` — procédure de test sur téléphone.
+- `docs/MISSION_09_REPORT.md` — rapports des sous-agents et verdict.
+- `docs/ANDROID_ARCHITECTURE.md` §10 — architecture.
+
+### 20.6 Verdict
+
+**Mission 09 livrée.** Les contrôles visuels de la Mission 08 (message
+d'expiration, bouton Retour) restent à confirmer sur le téléphone : ce sont
+des propriétés du framework Android, hors de portée d'un test JVM.

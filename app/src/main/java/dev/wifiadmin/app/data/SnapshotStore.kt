@@ -26,7 +26,31 @@ import kotlin.concurrent.withLock
  * the account is part of the identity: a snapshot is never shown for another
  * login.
  */
-data class SnapshotContext(val host: String, val account: String) {
+/**
+ * The router and account an instantané belongs to.
+ *
+ * The host is normalised to lower case and trimmed; the account is trimmed but
+ * keeps its case. Two different routers can share the same private address, so
+ * the account is part of the identity: a snapshot is never shown for another
+ * login.
+ *
+ * The **network identity** is part of it too. `192.168.1.1` is the default
+ * gateway of practically every home router, and `admin` is the default
+ * account: without the network, the pair `(host, account)` would be identical
+ * on two different routers, and the device list of one would be shown for the
+ * other.
+ *
+ * The identity is built from what the platform exposes **without** a
+ * location permission: the interface name, the address range of the network
+ * and the gateway. The BSSID would be more precise, but reading it requires
+ * `ACCESS_FINE_LOCATION`, which this application deliberately does not ask
+ * for.
+ */
+data class SnapshotContext(
+    val host: String,
+    val account: String,
+    val networkId: String = "",
+) {
 
     init {
         require(host.isNotBlank()) { "host must not be blank" }
@@ -34,10 +58,11 @@ data class SnapshotContext(val host: String, val account: String) {
     }
 
     companion object {
-        fun of(host: String, account: String): SnapshotContext =
+        fun of(host: String, account: String, networkId: String = ""): SnapshotContext =
             SnapshotContext(
                 host = host.trim().lowercase(Locale.ROOT),
                 account = account.trim(),
+                networkId = networkId.trim(),
             )
     }
 }
@@ -198,6 +223,10 @@ class SnapshotStore(
             val context = SnapshotContext.of(
                 host = contextJson.requiredString("host"),
                 account = contextJson.requiredString("account"),
+                // A file written before the network identity existed has
+                // none: it is read as an empty identity, which matches
+                // nothing but the same empty identity.
+                networkId = contextJson.optionalString("networkId").orEmpty(),
             )
 
             val devicesJson = root.optJSONArray("devices")
@@ -383,6 +412,7 @@ class SnapshotStore(
             JSONObject()
                 .put("host", context.host)
                 .put("account", context.account)
+                .put("networkId", context.networkId)
         )
 
         val devices = JSONArray()

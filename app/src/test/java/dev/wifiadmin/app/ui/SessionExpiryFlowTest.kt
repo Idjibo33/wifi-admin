@@ -1,7 +1,9 @@
 package dev.wifiadmin.app.ui
 
 import dev.wifiadmin.app.data.ConnectionState
+import dev.wifiadmin.app.data.RefreshCoordinator
 import dev.wifiadmin.app.data.RouterAdapter
+import dev.wifiadmin.app.data.TestHarness
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.RouterUnavailableException
 import dev.wifiadmin.app.data.SnapshotContext
@@ -21,10 +23,13 @@ import dev.wifiadmin.router.DeviceSignal
 import dev.wifiadmin.router.DeviceSnapshot
 import dev.wifiadmin.router.RouterDevice
 import dev.wifiadmin.router.WifiBand
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -74,6 +79,26 @@ class SessionExpiryFlowTest {
     }
 
     private fun store() = SnapshotStore(file) { CAPTURED_AT + 60_000L }
+
+    /**
+     * A coordinator on the repository, for the screen to drive.
+     */
+    private fun coordinator(
+        repository: RouterRepository,
+        scope: CoroutineScope,
+    ): RefreshCoordinator = TestHarness.coordinator(repository, scope)
+
+    /**
+     * Runs the polling once, then stops it.
+     *
+     * The polling loop never ends on its own: the test stops it once the
+     * read has settled.
+     */
+    private suspend fun TestScope.runPollingOnce(coordinator: RefreshCoordinator) {
+        coordinator.startPolling()
+        runCurrent()
+        coordinator.stopPolling()
+    }
 
     private fun device() = RouterDevice(
         mac = "aa:bb:cc:dd:ee:01",
@@ -488,8 +513,9 @@ class SessionExpiryFlowTest {
             // The very first read meets the expiry, which is what the view
             // model triggers when it is created.
             val repository = connectedRepository(FakeAdapter(expireAfter = 0))
-            val viewModel = DashboardViewModel(repository)
-            advanceUntilIdle()
+            val coordinator = coordinator(repository, this)
+            val viewModel = DashboardViewModel(repository, coordinator)
+            runPollingOnce(coordinator)
 
             assertTrue(
                 "the dashboard must not keep authenticated data after the expiry",
@@ -504,7 +530,7 @@ class SessionExpiryFlowTest {
     @Test
     fun `the device list view model reports the expiry`() = runTest(dispatcher) {
         val repository = connectedRepository(FakeAdapter(expireAfter = 0))
-        val viewModel = DevicesViewModel(repository)
+        val viewModel = DevicesViewModel(repository, coordinator(repository, this))
         advanceUntilIdle()
 
         assertTrue(
@@ -521,8 +547,9 @@ class SessionExpiryFlowTest {
     fun `the dashboard view model purges its devices when the session is lost`() =
         runTest(dispatcher) {
             val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-            val viewModel = DashboardViewModel(repository)
-            advanceUntilIdle()
+            val coordinator = coordinator(repository, this)
+            val viewModel = DashboardViewModel(repository, coordinator)
+            runPollingOnce(coordinator)
             assertNotNull(
                 "the dashboard must show the devices before the expiry",
                 viewModel.state.value.snapshot
@@ -543,8 +570,9 @@ class SessionExpiryFlowTest {
     fun `the device list view model purges its devices when the session is lost`() =
         runTest(dispatcher) {
             val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-            val viewModel = DevicesViewModel(repository)
-            advanceUntilIdle()
+            val coordinator = coordinator(repository, this)
+            val viewModel = DevicesViewModel(repository, coordinator)
+            runPollingOnce(coordinator)
             assertEquals(1, viewModel.state.value.devices.size)
 
             // The second read meets the expiry.

@@ -3,8 +3,10 @@ package dev.wifiadmin.app.ui.devices
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.wifiadmin.app.data.ConnectionState
+import dev.wifiadmin.app.data.RefreshCoordinator
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.RouterUnavailableException
+import dev.wifiadmin.app.ui.components.StaleDataReason
 import dev.wifiadmin.app.ui.components.userMessage
 import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.RouterDevice
@@ -68,6 +70,12 @@ data class DevicesUiState(
     val isSyncFailed: Boolean = false,
     /** True once a snapshot — live or cached — has been displayed. */
     val hasSnapshot: Boolean = false,
+    /**
+     * True when the phone left the network the router was reached on.
+     *
+     * The reads are suspended and the last known devices stay on screen.
+     */
+    val isNetworkChanged: Boolean = false,
 ) {
 
     /** True when the screen has nothing to show but a spinner. */
@@ -78,7 +86,23 @@ data class DevicesUiState(
 
     /** True when the list on screen is not a fresh, complete read. */
     val hasStaleData: Boolean
-        get() = hasSnapshot && (isFromCache || isSyncFailed || payloadAbsent)
+        get() = hasSnapshot &&
+            (isFromCache || isSyncFailed || payloadAbsent || isNetworkChanged)
+
+    /**
+     * Why the data on screen is not fresh.
+     *
+     * The order matters: the network change is the most specific reason, and
+     * it comes before the generic synchronisation failure.
+     */
+    val staleDataReason: StaleDataReason?
+        get() = when {
+            isNetworkChanged -> StaleDataReason.NETWORK_CHANGED
+            isFromCache -> StaleDataReason.CACHE
+            payloadAbsent -> StaleDataReason.INCOMPLETE_REPLY
+            isSyncFailed -> StaleDataReason.SYNC_FAILED
+            else -> null
+        }
 
     /**
      * The devices matching both the search query and the filter.
@@ -121,7 +145,8 @@ data class DevicesUiState(
  * one restored from disk right after a successful login), then refreshes it.
  */
 class DevicesViewModel(
-    private val repository: RouterRepository
+    private val repository: RouterRepository,
+    private val refreshCoordinator: RefreshCoordinator,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DevicesUiState())
@@ -130,7 +155,67 @@ class DevicesViewModel(
     init {
         seedFromRepository()
         observeSessionLoss()
-        refresh()
+        observeReads()
+    }
+
+    /**
+     * Starts the automatic refresh.
+     *
+     * The method is **idempotent**: the screen may call it again after a
+     * rotation or a return to the foreground, and the loop must not be
+     * duplicated. The loop itself belongs to the coordinator, which is
+     * shared with the dashboard.
+     */
+    fun startPolling() {
+        refreshCoordinator.startPolling()
+    }
+
+    /** Stops the automatic refresh. */
+    fun stopPolling() {
+        refreshCoordinator.stopPolling()
+    }
+
+    /**
+     * Mirrors the shared read state.
+     *
+     * The device list does not own the reads: the coordinator does, and the
+     * dashboard sees the same ones. The screen therefore **observes** the
+     * result instead of acting on its own.
+     */
+    private fun observeReads() {
+        viewModelScope.launch {
+            repository.readState.collect { readState ->
+                if (readState.lastError != null) {
+                    // The read failed: the data on screen is the last known
+                    // one, and it is no longer fresh.
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isSyncFailed = _state.value.hasSnapshot,
+                        errorMessage = readState.lastError.userMessage(),
+                    )
+                    return@collect
+                }
+
+                val snapshot = readState.snapshot ?: return@collect
+                if (snapshot.payloadAbsent) {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        payloadAbsent = true,
+                    )
+                    return@collect
+                }
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    devices = snapshot.devices,
+                    lastRefreshMillis = snapshot.capturedAtMillis,
+                    payloadAbsent = false,
+                    hasSnapshot = true,
+                    isFromCache = repository.state.value.isShowingCachedSnapshot,
+                    isSyncFailed = false,
+                    errorMessage = null,
+                )
+            }
+        }
     }
 
     /**
@@ -143,9 +228,14 @@ class DevicesViewModel(
     private fun observeSessionLoss() {
         viewModelScope.launch {
             repository.state.collect { state ->
-                if (state.connection !is ConnectionState.Connected &&
-                    state.connection !is ConnectionState.Cooldown
-                ) {
+                // A network change **keeps** the data: the router may still
+                // know the session, and the user may come back to the right
+                // network. Only a session that is really gone purges it.
+                val keepsData = state.connection is ConnectionState.Connected ||
+                    state.connection is ConnectionState.Cooldown ||
+                    state.connection is ConnectionState.NetworkChanged
+
+                if (!keepsData) {
                     _state.value = _state.value.copy(
                         devices = emptyList(),
                         lastRefreshMillis = null,
@@ -154,6 +244,13 @@ class DevicesViewModel(
                         payloadAbsent = false,
                         hasSnapshot = false,
                         isLoading = false,
+                    )
+                } else if (state.connection is ConnectionState.NetworkChanged) {
+                    // The network changed: the data on screen is the last
+                    // known state, not a fresh reading.
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        isNetworkChanged = true,
                     )
                 }
             }
@@ -200,33 +297,16 @@ class DevicesViewModel(
         )
 
         viewModelScope.launch(repository.networkDispatcher) {
-            val result = repository.refresh()
-            result
-                .onSuccess { snapshot ->
-                    // When the router answered without a list, the repository
-                    // keeps the previous snapshot. Show what it settled on.
-                    val effective = repository.state.value.snapshot ?: snapshot
-                    _state.value = _state.value.copy(
-                        isLoading = false,
-                        devices = effective.devices,
-                        lastRefreshMillis = effective.capturedAtMillis,
-                        payloadAbsent = snapshot.payloadAbsent,
-                        hasSnapshot = true,
-                        isFromCache = repository.state.value.isShowingCachedSnapshot,
-                        isSyncFailed = false,
-                        errorMessage = null
-                    )
-                }
-                .onFailure { error ->
-                    val hasSnapshot = _state.value.hasSnapshot
-                    _state.value = _state.value.copy(
-                        isLoading = false,
-                        isSyncFailed = hasSnapshot,
-                        errorMessage = (error as? RouterUnavailableException)?.userMessage()
-                            ?: error.message
-                            ?: "Impossible de joindre le routeur."
-                    )
-                }
+            repository.refresh().onFailure { error ->
+                val hasSnapshot = _state.value.hasSnapshot
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    isSyncFailed = hasSnapshot,
+                    errorMessage = (error as? RouterUnavailableException)?.userMessage()
+                        ?: error.message
+                        ?: "Impossible de joindre le routeur."
+                )
+            }
         }
     }
 }

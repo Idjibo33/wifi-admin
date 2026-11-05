@@ -15,6 +15,69 @@ import java.util.Locale
  */
 const val EXPIRY_MESSAGE = "Votre session a expiré. Reconnectez-vous pour continuer."
 
+/**
+ * The exact sentence shown when the phone left the network of the router.
+ *
+ * It is deliberately different from [EXPIRY_MESSAGE]: the session has not
+ * expired, the router is simply not reachable from here any more.
+ */
+const val NETWORK_CHANGED_MESSAGE =
+    "Le réseau a changé. Le routeur n'est plus joignable ici."
+
+/**
+ * The reason the data on screen is not fresh.
+ *
+ * The screens show a different banner for each: the user must be able to
+ * tell a lost router from a lost network from a failed synchronisation.
+ */
+enum class StaleDataReason {
+    /** The data comes from the disk and was read during an earlier session. */
+    CACHE,
+
+    /** The phone is not on the router's network any more. */
+    NETWORK_CHANGED,
+
+    /** The last synchronisation failed. */
+    SYNC_FAILED,
+
+    /** The router answered without any device list. */
+    INCOMPLETE_REPLY,
+}
+
+/**
+ * The message of the banner that explains why the data is not fresh.
+ *
+ * @param reason why the data is not fresh.
+ * @param capturedAtMillis when the data was read, or null.
+ */
+fun staleDataMessage(
+    reason: StaleDataReason,
+    capturedAtMillis: Long?,
+): String {
+    val date = formatSnapshotDate(capturedAtMillis)
+    return when (reason) {
+        StaleDataReason.CACHE -> if (date != null) {
+            "Dernières données connues — actualisées le $date."
+        } else {
+            "Dernières données connues — date d'actualisation inconnue."
+        }
+
+        StaleDataReason.NETWORK_CHANGED -> NETWORK_CHANGED_MESSAGE
+
+        StaleDataReason.SYNC_FAILED -> if (date != null) {
+            "Synchronisation impossible — dernières données connues le $date."
+        } else {
+            "Synchronisation impossible — les données affichées peuvent être anciennes."
+        }
+
+        StaleDataReason.INCOMPLETE_REPLY -> if (date != null) {
+            "Réponse incomplète du routeur — dernières données connues le $date."
+        } else {
+            "Réponse incomplète du routeur : aucune liste d'appareils reçue."
+        }
+    }
+}
+
 /** The label shown for a device presence state. */
 fun DevicePresence.label(): String = when (this) {
     DevicePresence.ACTIVE -> "Actif"
@@ -99,44 +162,6 @@ fun formatSnapshotDate(millis: Long?): String? {
     if (millis == null) return null
     val formatter = SimpleDateFormat("dd/MM/yyyy 'à' HH:mm", Locale.FRANCE)
     return formatter.format(Date(millis))
-}
-
-/**
- * The text of the "last known data" banner.
- *
- * Extracted from the composable so the exact wording — including the
- * product-mandated sentence for cached data — is covered by a unit test.
- *
- * @return null when the data on screen is fresh and complete.
- */
-fun cachedDataMessage(
-    capturedAtMillis: Long?,
-    isFromCache: Boolean,
-    isSyncFailed: Boolean,
-    payloadAbsent: Boolean,
-): String? {
-    if (!isFromCache && !isSyncFailed && !payloadAbsent) return null
-
-    val date = formatSnapshotDate(capturedAtMillis)
-    return when {
-        isFromCache -> if (date != null) {
-            "Dernières données connues — actualisées le $date."
-        } else {
-            "Dernières données connues — date d'actualisation inconnue."
-        }
-
-        payloadAbsent -> if (date != null) {
-            "Réponse incomplète du routeur — dernières données connues le $date."
-        } else {
-            "Réponse incomplète du routeur : aucune liste d'appareils reçue."
-        }
-
-        else -> if (date != null) {
-            "Synchronisation impossible — dernières données connues le $date."
-        } else {
-            "Synchronisation impossible — les données affichées peuvent être anciennes."
-        }
-    }
 }
 
 /**

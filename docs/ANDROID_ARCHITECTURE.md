@@ -351,7 +351,7 @@ Les tests du module `app` utilisent un `FakeAdapter` implémentant
 toucher au protocole. Les tests du cache utilisent un répertoire temporaire et
 une horloge injectable : aucun fichier réel de l'application n'est touché.
 
-Total : **375 tests**, 0 échec (mission 08, validation de l'expiration incluse).
+Total : **438 tests**, 0 échec (mission 09 incluse).
 
 Le scénario d'expiration est **reproductible hors ligne** : voir
 `docs/MISSION_08_EXPIRY_VALIDATION.md` et `tools/fake_router_expiry.py`.
@@ -482,8 +482,132 @@ repose pas sur la seule navigation.
 
 ---
 
-## 10. Ce qui reste à faire
+## 10. Rafraîchissement automatique et changements de réseau
 
+### 10.1 La répartition des responsabilités
+
+Trois étages, chacun testable à son niveau :
+
+```text
+Compose (LifecycleStartEffect)   →  « l'écran est-il visible ? »
+   ↓ startPolling() / stopPolling()
+RefreshCoordinator (la boucle)    →  « toutes les 30 s, tant que visible »
+   ↓ refreshIfStale()
+ReadCoordinator (single-flight)   →  « une seule lecture, pas périmée »
+   ↓
+RouterAdapter
+```
+
+| Élément | Lieu | Justification |
+|---|---|---|
+| Détection de la visibilité | `LifecycleStartEffect` dans les écrans Compose | La Compose connaît le cycle de vie ; le ViewModel n'a pas à le connaître. |
+| La boucle de 30 s | `RefreshCoordinator`, **unique** dans `AppContainer` | Un ViewModel est recréé au changement d'onglet : son minuteur repartirait de zéro. Un coordinateur unique non. |
+| La mutualisation | `ReadCoordinator` (un `Deferred` en vol) | Le `Mutex` **sérialise** mais ne **mutualise** pas : deux écrans produiraient deux requêtes. |
+| La fraîcheur et le back-off | `ReadFreshnessPolicy`, `RefreshPolicy` | Des fonctions pures : testables sans coroutine et sans attente. |
+| La détection du réseau | `NetworkMonitor`, observé par le repository | Le repository détient l'état de session : c'est le seul qui puisse comparer le réseau courant à celui de la session. |
+
+### 10.2 La lecture est dédupliquée, pas seulement sérialisée
+
+`ReadCoordinator` tient **un seul `Deferred` en vol**. Un appelant qui arrive
+pendant une lecture **attend cette lecture** au lieu d'en lancer une
+autre : les deux écrans reçoivent le même résultat, et le routeur n'est
+demandé qu'une fois.
+
+C'est la subtilité centrale du chantier : le `Mutex` du repository enveloppe
+aujourd'hui l'appel réseau. Le garder ainsi **casserait silencieusement** la
+mutualisation — le second appelant attendrait le verrou, constaterait
+qu'aucune lecture n'est en vol, et ferait une seconde lecture.
+
+Le compteur de `fetchCalls` du faux adaptateur est la preuve : le test
+« deux lectures concurrentes n'atteignent l'adaptateur qu'une fois » échouerait
+si le verrou remained autour de la lecture.
+
+### 10.3 L'horloge : monotone pour les délais, civile pour les étiquettes
+
+| Usage | Horloge |
+|---|---|
+| Période de rafraîchissement | `delay` de coroutines (monotone) |
+| Fenêtre de fraîcheur | `AppClock.monotonicMillis()` |
+| Back-off | `AppClock.monotonicMillis()` |
+| « Lecture en cours depuis quand » | `AppClock.monotonicMillis()` |
+| `capturedAtMillis`, `writtenAtMillis` | `AppClock.wallClockMillis()` |
+
+`SystemClock.elapsedRealtime()` est l'horloge monotone d'Android ;
+`System.currentTimeMillis()` est l'horloge civile. Un changement de date du
+téléphone ne peut donc ni raccourcir ni allonger une période, ni faire
+disparaître l'instantané.
+
+### 10.4 La détection du réseau
+
+`NetworkMonitor` surveille les **réseaux Wi-Fi**, pas le réseau par défaut :
+un callback sur le réseau par défaut ne dirait rien du Wi-Fi local quand il
+cesse d'être le réseau privilégié.
+
+Ce qui **n'est pas** utilisé, et pourquoi :
+
+| Ce qui n'est pas utilisé | Raison |
+|---|---|
+| `NET_CAPABILITY_VALIDATED` | Un réseau local **sans Internet** reste parfaitement capable de joindre le routeur. Le filtrer reviendrait à casser le cas le plus utile. |
+| `NET_CAPABILITY_INTERNET` | Idem. |
+| Le SSID et le BSSID | Ils exigent `ACCESS_FINE_LOCATION` depuis Android 12. L'application ne la demande pas. |
+| `getLinkProperties()` dans un callback | La plateforme warns explicitement que les appels synchrones sont sujets à races. Les valeurs viennent des **arguments** du callback. |
+
+Un partage de connexion mobile est un réseau Wi-Fi **et** cellulaire : il
+n'est jamais le routeur, et il est rapporté comme « pas de réseau local ».
+
+### 10.5 L'identité du réseau, et la limite assumée
+
+`NetworkIdentity` associe l'interface, la plage d'adresses et la passerelle.
+Elle entre dans le `SnapshotContext`, à côté de l'hôte et du compte.
+
+> **Pourquoi c'est nécessaire.** `192.168.1.1` est la passerelle par défaut
+> de pratiquement **tout** routeur domestique, et `admin` le compte par
+> défaut. Sans l'identité du réseau, le couple `(hôte, compte)` serait
+> identique sur deux routeurs différents, et la liste d'appareils de l'un
+> serait affichée pour l'autre.
+
+> **La limite, assumée.** Deux réseaux différents **peuvent** partager la
+> même interface, la même plage et la même passerelle. Sans le BSSID — qui
+> exigerait une permission de localisation — l'application ne peut pas les
+> distinguer. Elle dit donc « routeur détecté », jamais « votre routeur ».
+> Le pire cas est un changement **non détecté** : les lectures échouent alors
+> en `Unreachable`, **jamais** en expiration.
+
+### 10.6 Un changement de réseau n'est pas une expiration
+
+`ConnectionState.NetworkChanged` est un état **distinct** :
+
+| | Expiration | Changement de réseau |
+|---|---|---|
+| Déclencheur | renouvellement d'une session raté | le téléphone a quitté le réseau du routeur |
+| Session | invalide | **conservée** : le routeur peut encore la connaître |
+| Lecture | arrêtée | **suspendue** |
+| Données en mémoire | **vidées** | **conservées** : ce sont les dernières connues |
+| Navigation | retour à la connexion | **aucune** |
+| Message | « Votre session a expiré… » | « Le réseau a changé… » |
+
+Le fichier du cache est conservé dans les deux cas : il porte son propre
+contexte réseau, et il ne sera pas restauré sur un autre réseau.
+
+### 10.7 Les règles de sûreté du rafraîchissement
+
+| Règle | Effet |
+|---|---|
+| Une seule boucle pour toute l'application | 3 requêtes par cycle, pas 6 |
+| Le rafraîchissement ne s'ouvre **jamais** de session | aucun `cmd 100` proactif, donc aucun gel de 180 s provoqué |
+| Un cooldown **suspend** le rafraîchissement | le routeur qui refuse les connexions est laissé tranquille jusqu'à la fin de la pénalité |
+| Les échecs font croître le délai | 30 s → 60 s → 120 s → 300 s |
+| Le rafraîchissement s'arrête hors écran | aucun service, aucun WorkManager, aucune permission nouvelle |
+| Une lecture manuelle ne double jamais une lecture en cours | elle attend la lecture en vol, ou réutilise une lecture fraîche |
+
+La passe de tests qui accompagne la mission compte les requêtes envoyées au
+routeur : ce sont eux qui prouvent qu'un cycle de lecture en coûte **trois**
+(les commandes 223, 224 et 225) et qu'aucune commande d'écriture n'est
+possible.
+
+---
+
+## 11. Ce qui reste à faire
 | Sujet | État |
 |---|---|
 | Filtrage **pare-feu** (`cmd 23`) | **`UNAVAILABLE` sur ce firmware** (clôture du 30/10/2026). L'interface officielle reçoit la même réponse creuse que nous. Aucune intégration ne sera faite. Voir `FIREWALL_ANALYSIS.md` §13ter. |

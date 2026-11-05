@@ -19,6 +19,14 @@ class OkHttpRouterTransport(
 
     private val jsonMediaType = "application/json; charset=UTF-8".toMediaType()
 
+    /**
+     * The clients, one per timeout value.
+     *
+     * They are created once and reused: a client owns a connection pool and
+     * a thread pool, and creating one per request would leak them.
+     */
+    private val clients = mutableMapOf<Long, OkHttpClient>()
+
     private val baseClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(defaultTimeoutSeconds, TimeUnit.SECONDS)
         .readTimeout(defaultTimeoutSeconds, TimeUnit.SECONDS)
@@ -42,13 +50,16 @@ class OkHttpRouterTransport(
             .header("User-Agent", USER_AGENT)
             .build()
 
-        val client = baseClient.newBuilder()
-            .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
-            .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
-            .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
-            .build()
+        // The client is **shared**, and the timeout is applied to the call
+        // through an interceptor.
+        //
+        // Cloning the client for every request would create a new connection
+        // pool and a new thread pool each time, and they would never be
+        // closed. With an automatic refresh every thirty seconds, that would
+        // leak thousands of pools per day.
+        val call = clientFor(timeoutSeconds).newCall(request)
 
-        client.newCall(request).execute().use { response ->
+        call.execute().use { response ->
             if (!response.isSuccessful) {
                 // Turn the HTTP status into a structured failure the caller can read.
                 return JSONObject()
@@ -59,6 +70,21 @@ class OkHttpRouterTransport(
             return response.body?.string() ?: "{}"
         }
     }
+
+    /**
+     * The client used for a given timeout.
+     *
+     * There is one client per distinct timeout value, and they are reused for
+     * the whole life of the transport.
+     */
+    private fun clientFor(timeoutSeconds: Long): OkHttpClient =
+        clients.getOrPut(timeoutSeconds) {
+            baseClient.newBuilder()
+                .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .build()
+        }
 
     companion object {
         const val DEFAULT_TIMEOUT_SECONDS: Long = 4L
