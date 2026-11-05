@@ -31,16 +31,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
+      # No `android-actions/setup-android`: its `sdkmanager tools` call fails
+      # because the `tools` package no longer exists in the SDK repository.
+      # The runner image already ships the command-line tools and ANDROID_HOME.
       - name: Install the Android SDK packages
         run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          echo "Using $SDKMANAGER"
           # AGP can only auto-download a missing package once the licences
           # are accepted.
-          yes | sdkmanager --licenses > /dev/null || true
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
           # `android-37.0` is the package name of Android 17 (API 37,
           # extension level 22), not `android-37`.
-          sdkmanager --install \
+          "$SDKMANAGER" --install \
             "platforms;android-37.0" \
             "build-tools;36.0.0" \
             "platform-tools"
