@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+# A new push on the same branch cancels the previous run: the result of an
+# outdated commit is of no interest.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The JVM tests need the Android SDK: the `app` module compiles against
+  # `compileSdk = 37` (Android 17).
+  jvm-tests:
+    name: JVM tests and debug build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # No `android-actions/setup-android`: its `sdkmanager tools` call fails
+      # because the `tools` package no longer exists in the SDK repository.
+      # The runner image already ships the command-line tools and ANDROID_HOME.
+      - name: Install the Android SDK packages
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          echo "Using $SDKMANAGER"
+          # AGP can only auto-download a missing package once the licences
+          # are accepted.
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          # `android-37.0` is the package name of Android 17 (API 37,
+          # extension level 22), not `android-37`.
+          "$SDKMANAGER" --install \
+            "platforms;android-37.0" \
+            "build-tools;36.0.0" \
+            "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # No `--offline`: the local cache of a developer machine does not exist
+      # on a runner. The versions are pinned, so the resolution is stable.
+      - name: Unit tests
+        run: >-
+          ./gradlew
+          :router-core:test
+          :poc-cli:test
+          :app:testDebugUnitTest
+          --stacktrace
+
+      - name: Build the debug APK
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-test-reports
+          path: |
+            **/build/reports/tests/
+            **/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The router scenarios run against a fake router bound to 127.0.0.1. They
+  # need the built CLI, but no Android SDK.
+  router-scenarios:
+    name: Offline router scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the CLI used by the scenarios
+        run: ./gradlew :poc-cli:installDist --stacktrace
+
+      - name: Firewall and malformed-reply scenarios
+        run: python3 tools/fake_router_scenarios.py
+
+      - name: Session-expiry scenarios
+        run: python3 tools/fake_router_expiry_scenarios.py
