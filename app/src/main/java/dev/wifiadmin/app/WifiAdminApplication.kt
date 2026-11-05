@@ -13,6 +13,7 @@ import dev.wifiadmin.app.data.SnapshotStore
 import dev.wifiadmin.app.data.SystemAppClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import java.io.File
 
@@ -84,6 +85,18 @@ class AppContainer(application: Application) {
     )
 
     /**
+     * The observation of the local network.
+     *
+     * It **must** be started, otherwise the application never learns that the
+     * phone left the router's network: the reads would keep going to an
+     * address that no longer belongs to the router.
+     *
+     * The observation lives in the application scope, so it survives the
+     * navigation and the rotation.
+     */
+    private val networkObservation: Job = routerRepository.observeNetworkChanges()
+
+    /**
      * The automatic refresh.
      *
      * One for the whole application: the dashboard and the device list show
@@ -94,6 +107,12 @@ class AppContainer(application: Application) {
         scope = applicationScope,
         policy = RefreshPolicy(),
     )
+
+    init {
+        // When the network comes back, the failures caused by the wrong
+        // network must not delay the reads.
+        routerRepository.onNetworkRestored = refreshCoordinator::resetFailures
+    }
 
     /** Suggests the router address from the current Wi-Fi network. */
     val routerAddressResolver: RouterAddressResolver =

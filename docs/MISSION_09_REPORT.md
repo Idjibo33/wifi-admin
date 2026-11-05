@@ -244,11 +244,26 @@ partagés au lieu d'être recréés à chaque requête.
 | Aucun secret, aucune écriture, aucun service | **CONFORME** |
 | Non-régression Mission 08 | **438 tests, 0 échec** |
 
-### Verdict : **MISSION 09 LIVRÉE**
+### Verdict : **MISSION 09 LIVRÉE, puis VALIDÉE SUR APPAREIL RÉEL**
 
 Sept défauts ont été trouvés par les sous-agents — dont deux critiques
 (cache cross-routeur, fuite de pools HTTP) — et tous corrigés, chacun
 couvert par un test.
+
+La recette automatisée sur un **Pixel 7 Pro réel (Android 17)** a ensuite
+révélé **six défauts supplémentaires**, dont deux critiques :
+
+| # | Défaut | Gravité |
+|---|---|---|
+| 1 | L'observation du réseau n'était **jamais démarrée** en production : la fonctionnalité B était du code mort. | 🔴 |
+| 2 | `SnapshotContext.networkId` n'était **jamais alimenté** : la protection cross-routeur n'existait pas. | 🔴 |
+| 3 | L'identité réseau n'était comparée que par la passerelle. | 🟠 |
+| 4 | La lecture manuelle interrogeait le routeur juste après la lecture programmée. | 🟠 |
+| 5 | Un cooldown sans durée neutralisait la suspension. | 🟠 |
+| 6 | Une lecture manuelle pendant un cooldown contournait la suspension. | 🟠 |
+
+Tous corrigés et couverts par un test de régression. Le détail et les
+preuves sont dans `docs/MISSION_09_DEVICE_VALIDATION_REPORT.md`.
 
 **Suite** : la validation sur téléphone reste à faire, avec la procédure de
 `docs/MISSION_09_VALIDATION.md`, qui inclut les deux contrôles visuels de la

@@ -183,11 +183,11 @@ class SessionExpiryFlowTest {
             val repository = connectedRepository(adapter)
 
             // The first read succeeds, the second one meets the expiry.
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
             // Any further read must be refused without reaching the adapter.
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
 
             assertEquals(
                 "the adapter must be reached once for the live read and once " +
@@ -202,8 +202,8 @@ class SessionExpiryFlowTest {
         val adapter = FakeAdapter(expireAfter = 1)
         val repository = connectedRepository(adapter)
 
-        repository.refresh()
-        repository.refresh()
+        repository.refreshForced()
+        repository.refreshForced()
 
         assertEquals(
             "the adapter session must be dropped",
@@ -219,10 +219,10 @@ class SessionExpiryFlowTest {
     @Test
     fun `an expiry clears the snapshot from memory`() = runTest(dispatcher) {
         val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-        repository.refresh()
+        repository.refreshForced()
         assertNotNull("the live snapshot must be there before the expiry", repository.state.value.snapshot)
 
-        repository.refresh()
+        repository.refreshForced()
 
         assertNull(
             "no authenticated device data may survive an expiry",
@@ -235,9 +235,9 @@ class SessionExpiryFlowTest {
     fun `an expiry leaves no trace of the session in the repository state`() =
         runTest(dispatcher) {
             val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-            repository.refresh()
+            repository.refreshForced()
 
-            repository.refresh()
+            repository.refreshForced()
 
             val state = repository.state.value
             assertTrue(state.connection is ConnectionState.SessionExpired)
@@ -253,9 +253,9 @@ class SessionExpiryFlowTest {
     fun `an expiry asks the navigation to return to the login screen`() =
         runTest(dispatcher) {
             val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-            repository.refresh()
+            repository.refreshForced()
 
-            repository.refresh()
+            repository.refreshForced()
 
             assertTrue(
                 "the navigation must be told to go back to the login screen",
@@ -270,8 +270,8 @@ class SessionExpiryFlowTest {
     fun `the navigation does not ask to go back when the login screen is already shown`() =
         runTest(dispatcher) {
             val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
 
             assertFalse(
                 "navigating again would push a duplicate login entry",
@@ -289,8 +289,8 @@ class SessionExpiryFlowTest {
     @Test
     fun `the login screen reports the expiry`() = runTest(dispatcher) {
         val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-        repository.refresh()
-        repository.refresh()
+        repository.refreshForced()
+        repository.refreshForced()
 
         val viewModel = LoginViewModel(repository)
 
@@ -342,10 +342,10 @@ class SessionExpiryFlowTest {
         runTest(dispatcher) {
             val store = store()
             val repository = connectedRepository(FakeAdapter(expireAfter = 1), store)
-            repository.refresh()
+            repository.refreshForced()
             assertTrue("the file must exist after a successful read", store.read() is SnapshotRead.Found)
 
-            repository.refresh()
+            repository.refreshForced()
 
             assertTrue(
                 "the file must survive an expiry: the user may sign in again",
@@ -357,7 +357,7 @@ class SessionExpiryFlowTest {
     fun `a voluntary logout deletes the snapshot file`() = runTest(dispatcher) {
         val store = store()
         val repository = connectedRepository(FakeAdapter(expireAfter = 1), store)
-        repository.refresh()
+        repository.refreshForced()
 
         repository.disconnect()
 
@@ -374,8 +374,8 @@ class SessionExpiryFlowTest {
             val store = store()
             val adapter = FakeAdapter(expireAfter = 1)
             val repository = connectedRepository(adapter, store)
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
 
             // The user signs in again: the file is restored.
             repository.connect("192.168.1.1", "admin", "secret")
@@ -396,7 +396,7 @@ class SessionExpiryFlowTest {
             }
         )
 
-        repository.refresh()
+        repository.refreshForced()
 
         val state = repository.state.value
         assertFalse("a timeout must not sign the user out", state.connection is ConnectionState.SessionExpired)
@@ -415,7 +415,7 @@ class SessionExpiryFlowTest {
             }
         )
 
-        repository.refresh()
+        repository.refreshForced()
 
         val state = repository.state.value
         assertFalse(state.connection is ConnectionState.SessionExpired)
@@ -435,7 +435,7 @@ class SessionExpiryFlowTest {
                 }
             )
 
-            repository.refresh()
+            repository.refreshForced()
 
             val state = repository.state.value
             val connection = state.connection
@@ -454,7 +454,7 @@ class SessionExpiryFlowTest {
             }
         )
 
-        repository.refresh()
+        repository.refreshForced()
 
         val state = repository.state.value
         assertFalse(state.connection is ConnectionState.SessionExpired)
@@ -472,9 +472,9 @@ class SessionExpiryFlowTest {
             val repository = connectedRepository(adapter)
 
             // The dashboard and the device list refresh at the same time.
-            repository.refresh()
-            val first = repository.refresh()
-            val second = repository.refresh()
+            repository.refreshForced()
+            val first = repository.refreshForced()
+            val second = repository.refreshForced()
 
             assertTrue(first.isFailure)
             assertTrue(second.isFailure)
@@ -493,8 +493,8 @@ class SessionExpiryFlowTest {
     fun `the expiry state is stable so the navigation effect cannot loop`() =
         runTest(dispatcher) {
             val repository = connectedRepository(FakeAdapter(expireAfter = 1))
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
 
             val first = repository.state.value.connection
             val second = repository.state.value.connection
@@ -556,7 +556,7 @@ class SessionExpiryFlowTest {
             )
 
             // The second read meets the expiry.
-            repository.refresh()
+            repository.refreshForced()
             advanceUntilIdle()
 
             assertNull(
@@ -576,7 +576,7 @@ class SessionExpiryFlowTest {
             assertEquals(1, viewModel.state.value.devices.size)
 
             // The second read meets the expiry.
-            repository.refresh()
+            repository.refreshForced()
             advanceUntilIdle()
 
             assertTrue(
@@ -595,8 +595,8 @@ class SessionExpiryFlowTest {
             val viewModel = LoginViewModel(repository)
             assertEquals(LoginResult.None, viewModel.result.value)
 
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
             advanceUntilIdle()
 
             assertEquals(
@@ -611,8 +611,8 @@ class SessionExpiryFlowTest {
         runTest(dispatcher) {
             val adapter = FakeAdapter(expireAfter = 1)
             val repository = connectedRepository(adapter)
-            repository.refresh()
-            repository.refresh()
+            repository.refreshForced()
+            repository.refreshForced()
             assertTrue(repository.state.value.connection is ConnectionState.SessionExpired)
 
             val viewModel = LoginViewModel(repository)

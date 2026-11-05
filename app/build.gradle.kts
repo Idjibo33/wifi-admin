@@ -67,6 +67,17 @@ dependencies {
 
     debugImplementation(libs.compose.ui.tooling)
 
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.10.4")
+    androidTestImplementation("androidx.compose.ui:ui-test-android:1.10.4")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.test.espresso:espresso-idling-resource:3.7.0")
+    androidTestImplementation("androidx.navigation:navigation-testing:2.9.0")
+    // `ui-test-manifest` declares `androidx.activity.ComponentActivity`, the
+    // activity the Compose test rule launches. It must be merged into the
+    // **target** APK manifest (the app under test), hence debugImplementation.
+    debugImplementation("androidx.compose.ui:ui-test-manifest:1.10.4")
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.org.json)

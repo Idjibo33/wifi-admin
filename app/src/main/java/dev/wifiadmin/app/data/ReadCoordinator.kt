@@ -43,8 +43,14 @@ fun interface ReadFreshnessPolicy {
     fun isFresh(ageMillis: Long): Boolean
 
     companion object {
-        /** The default window: the polling period itself. */
-        val Default = ReadFreshnessPolicy { ageMillis -> ageMillis < 30_000L }
+        /**
+         * The default window.
+         *
+         * It must be **the same** as the repository's: two different
+         * windows would be two sources of truth, and the more permissive one
+         * would silently skip a read the other one considers necessary.
+         */
+        val Default = ReadFreshnessPolicy { ageMillis -> ageMillis < 25_000L }
     }
 }
 

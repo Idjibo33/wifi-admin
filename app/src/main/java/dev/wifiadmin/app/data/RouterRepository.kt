@@ -94,6 +94,35 @@ class RouterRepository(
      */
     private var lastSuccessfulReadAtMillis: Long? = null
 
+    /**
+     * The identity of the network the session was opened on.
+     *
+     * It is part of the [SnapshotContext]: `192.168.1.1` is the gateway of
+     * practically every home router, and `admin` the default account, so the
+     * pair `(host, account)` alone would not tell two routers apart.
+     *
+     * It is empty when the network could not be identified, and then the
+     * context is the pair alone.
+     */
+    private var sessionNetworkId: String = ""
+
+    /**
+     * The identity of the network the phone is on right now.
+     */
+    private var currentNetworkId: String = ""
+
+    /**
+     * Called when the network comes back.
+     *
+     * The refresh coordinator uses it to forget the failures that were
+     * caused by the wrong network, so that the reads resume at once.
+     *
+     * It is **internal**: it is an internal wiring between two collaborators,
+     * not a public API, and it must not become a way to steer the
+     * application from the outside.
+     */
+    internal var onNetworkRestored: (() -> Unit)? = null
+
     private val _state = MutableStateFlow(RouterUiState())
     val state: StateFlow<RouterUiState> = _state.asStateFlow()
 
@@ -153,7 +182,14 @@ class RouterRepository(
                     return@withLock false
                 }
 
-                val context = SnapshotContext.of(normalizedHost, normalizedUsername)
+                val context = SnapshotContext.of(
+                    host = normalizedHost,
+                    account = normalizedUsername,
+                    networkId = currentNetworkId,
+                )
+                // The session is bound to the network it was opened on: it is
+                // what tells it apart from another router on the same address.
+                sessionNetworkId = currentNetworkId
                 val restored = restore(context)
 
                 if (startGeneration != generation) {
@@ -201,8 +237,24 @@ class RouterRepository(
      * is running joins it instead of starting a second one. The dashboard and
      * the device list therefore produce a single network request, and a manual
      * refresh never doubles a read that is already in flight.
+     *
+     * A manual refresh also **reuses a very recent read**: the user wants
+     * fresh data, and a read that completed a moment ago *is* fresh data.
+     * Asking the router again right after the scheduled read would double
+     * the traffic for nothing — and the firmware refuses logins for 180
+     * seconds after too many failures.
      */
-    suspend fun refresh(): Result<DeviceSnapshot> = performRead(force = true)
+    suspend fun refresh(): Result<DeviceSnapshot> =
+        performRead(force = false, maxAgeMillis = MANUAL_REFRESH_REUSE_WINDOW_MILLIS)
+
+    /**
+     * Reads the devices, whatever their age.
+     *
+     * This is the **forced** read: the router is always asked. It exists for
+     * the cases where the data cannot be trusted — a changed network, a
+     * restored cache, or a test that asserts the router is reached.
+     */
+    suspend fun refreshForced(): Result<DeviceSnapshot> = performRead(force = true)
 
     /**
      * Reads the devices only when the last successful read is older than
@@ -276,16 +328,38 @@ class RouterRepository(
                 RouterUnavailableException.NotConnected()
             )
 
-            ConnectionState.Connected,
-            is ConnectionState.Cooldown -> Unit
+            ConnectionState.Connected -> Unit
+
+            // The router refuses logins: a manual refresh must not knock on
+            // its door during the penalty either. The penalty is over now,
+            // so the session becomes usable again.
+            is ConnectionState.Cooldown -> {
+                if (cooldownRemainingMillis() == null) {
+                    // The penalty has expired: the session is usable again.
+                    _state.value = _state.value.copy(
+                        connection = ConnectionState.Connected,
+                        error = null,
+                    )
+                } else {
+                    return Result.failure(
+                        RouterUnavailableException.NotConnected()
+                    )
+                }
+            }
         }
 
         val startGeneration = generation
         val context = runCatching {
-            SnapshotContext.of(_state.value.host, _state.value.username)
+            SnapshotContext.of(
+                host = _state.value.host,
+                account = _state.value.username,
+                networkId = currentNetworkId,
+            )
         }.getOrNull()
 
-        val outcome = coordinator.read(force = true)
+        // The coordinator applies its own freshness window: a read that just
+        // succeeded is reused instead of asking the router again.
+        val outcome = coordinator.read(force = force)
 
         if (startGeneration != generation) {
             // A session changed while the read was running: the result
@@ -363,9 +437,12 @@ class RouterRepository(
 
             // The router refuses logins for a while: the session is kept.
             is RouterUnavailableException.Cooldown -> {
-                cooldownUntilMonotonicMillis = error.retryAfterSeconds?.let {
-                    clock.monotonicMillis() + it * 1_000L
-                }
+                // The router says how long, or it does not say. When it does
+                // not, the documented penalty of the firmware is used: a
+                // router that refuses without saying why is the case where
+                // insisting is the most harmful.
+                val seconds = error.retryAfterSeconds ?: UNKNOWN_COOLDOWN_SECONDS
+                cooldownUntilMonotonicMillis = clock.monotonicMillis() + seconds * 1_000L
                 _state.value = _state.value.copy(
                     connection = ConnectionState.Cooldown(error.retryAfterSeconds),
                     isRefreshing = false,
@@ -480,13 +557,24 @@ class RouterRepository(
      * user out. It only suspends the reads and says what happened.
      */
     private fun onNetworkStatus(status: LocalNetworkStatus) {
+        // The identity of the network is remembered even when no session is
+        // open: it is what tells two routers apart when the snapshot is
+        // written.
+        currentNetworkId = when (status) {
+            is LocalNetworkStatus.LocalWifi -> status.identity.key
+            is LocalNetworkStatus.DifferentNetwork -> status.identity.key
+            LocalNetworkStatus.NoWifi,
+            LocalNetworkStatus.NotOnWifi,
+            -> ""
+        }
+
         val current = _state.value
         val sessionOpen = current.connection is ConnectionState.Connected ||
             current.connection is ConnectionState.Cooldown ||
             current.connection is ConnectionState.NetworkChanged
         if (!sessionOpen) return
 
-        val assessment = assessNetwork(status, current.host)
+        val assessment = assessNetwork(status, current.host, currentNetworkId)
         when (assessment.confidence) {
             NetworkConfidence.LOCAL_DEFAULT -> {
                 // Back on the right network: the reads resume.
@@ -495,6 +583,9 @@ class RouterRepository(
                         connection = ConnectionState.Connected,
                         error = null,
                     )
+                    // The failures were caused by the wrong network, not by
+                    // the router: the reads must resume at once.
+                    onNetworkRestored?.invoke()
                 }
             }
 
@@ -522,6 +613,26 @@ class RouterRepository(
 
             NetworkConfidence.UNKNOWN -> Unit
         }
+    }
+
+    companion object {
+        /**
+         * The penalty the firmware applies when it refuses logins without
+         * saying for how long.
+         *
+         * It is the documented 180 seconds. Without it, the application would
+         * keep asking a router that is in the middle of a lockout.
+         */
+        const val UNKNOWN_COOLDOWN_SECONDS = 180
+
+        /**
+         * How long a read stays reusable for a **manual** refresh.
+         *
+         * It is short: the user pressed the button, so the data is almost
+         * certainly less than a second old. A manual refresh therefore
+         * reuses the scheduled read instead of asking the router again.
+         */
+        const val MANUAL_REFRESH_REUSE_WINDOW_MILLIS = 1_000L
     }
 
     /**

@@ -351,7 +351,8 @@ Les tests du module `app` utilisent un `FakeAdapter` implémentant
 toucher au protocole. Les tests du cache utilisent un répertoire temporaire et
 une horloge injectable : aucun fichier réel de l'application n'est touché.
 
-Total : **438 tests**, 0 échec (mission 09 incluse).
+Total : **453 tests** JVM, 0 échec, plus **20 tests instrumentés** exécutés
+sur un Pixel 7 Pro (Android 17) — voir `MISSION_09_DEVICE_VALIDATION_REPORT.md`.
 
 Le scénario d'expiration est **reproductible hors ligne** : voir
 `docs/MISSION_08_EXPIRY_VALIDATION.md` et `tools/fake_router_expiry.py`.
@@ -558,7 +559,8 @@ n'est jamais le routeur, et il est rapporté comme « pas de réseau local ».
 ### 10.5 L'identité du réseau, et la limite assumée
 
 `NetworkIdentity` associe l'interface, la plage d'adresses et la passerelle.
-Elle entre dans le `SnapshotContext`, à côté de l'hôte et du compte.
+Elle entre dans le `SnapshotContext`, à côté de l'hôte et du compte, et c'est
+elle — **pas la seule passerelle** — qui est comparée à la restauration.
 
 > **Pourquoi c'est nécessaire.** `192.168.1.1` est la passerelle par défaut
 > de pratiquement **tout** routeur domestique, et `admin` le compte par
@@ -598,7 +600,9 @@ contexte réseau, et il ne sera pas restauré sur un autre réseau.
 | Un cooldown **suspend** le rafraîchissement | le routeur qui refuse les connexions est laissé tranquille jusqu'à la fin de la pénalité |
 | Les échecs font croître le délai | 30 s → 60 s → 120 s → 300 s |
 | Le rafraîchissement s'arrête hors écran | aucun service, aucun WorkManager, aucune permission nouvelle |
-| Une lecture manuelle ne double jamais une lecture en cours | elle attend la lecture en vol, ou réutilise une lecture fraîche |
+| Une lecture manuelle ne double jamais une lecture en cours | elle attend la lecture en vol, ou réutilise une lecture de moins d'une seconde |
+| Une lecture manuelle ne double jamais la lecture programmée | la fenêtre de fraîcheur s'applique aussi au bouton « Actualiser » |
+| Une lecture **forcée** atteint toujours le routeur | `refreshForced()`, pour les cas où la donnée n'est plus fiable |
 
 La passe de tests qui accompagne la mission compte les requêtes envoyées au
 routeur : ce sont eux qui prouvent qu'un cycle de lecture en coûte **trois**

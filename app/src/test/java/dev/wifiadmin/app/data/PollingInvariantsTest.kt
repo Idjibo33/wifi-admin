@@ -208,21 +208,39 @@ class PollingInvariantsTest {
     @Test
     fun `an expiry during the polling keeps the snapshot file`() =
         runTest(dispatcher) {
-            val store = SnapshotStore(
-                java.io.File.createTempFile("invariants", ".json"),
-            )
+            val directory = java.nio.file.Files.createTempDirectory("invariants").toFile()
+            val file = java.io.File(directory, SnapshotStore.FILE_NAME)
+            val store = SnapshotStore(file) { 1_700_000_060_000L }
+            // The first read succeeds and writes the file, the second one
+            // meets the expiry.
+            var reads = 0
             val adapter = FakeRouterAdapter {
-                throw RouterUnavailableException.SessionExpired()
+                reads++
+                if (reads > 1) {
+                    throw RouterUnavailableException.SessionExpired()
+                }
+                FakeRouterAdapter.oneDevice(1_700_000_000_000L)
             }
             val (repository, coordinator, _) = harness(adapter, store)
 
             coordinator.startPolling()
             runCurrent()
+            assertTrue(
+                "the file must exist after the first successful read",
+                store.read() is SnapshotRead.Found
+            )
+
+            // The second read meets the expiry.
+            advanceTimeBy(30_000)
+            runCurrent()
 
             assertTrue(
+                "the expiry must have been detected",
+                repository.state.value.connection is ConnectionState.SessionExpired
+            )
+            assertTrue(
                 "the file must survive an expiry: the user may sign in again",
-                store.read() is SnapshotRead.Missing ||
-                    store.read() is SnapshotRead.Found
+                store.read() is SnapshotRead.Found
             )
             coordinator.stopPolling()
         }

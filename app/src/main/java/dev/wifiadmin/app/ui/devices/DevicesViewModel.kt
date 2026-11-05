@@ -212,6 +212,7 @@ class DevicesViewModel(
                     hasSnapshot = true,
                     isFromCache = repository.state.value.isShowingCachedSnapshot,
                     isSyncFailed = false,
+                    isNetworkChanged = false,
                     errorMessage = null,
                 )
             }

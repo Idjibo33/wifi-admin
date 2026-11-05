@@ -85,8 +85,21 @@ class RefreshCoordinator(
     /** True while the polling loop is running. */
     val isPolling: Boolean get() = pollJob?.isActive == true
 
-    /** The number of consecutive failures since the last success. */
+    /**
+     * The number of consecutive failures since the last success.
+     */
     val failureCount: Int get() = consecutiveFailures
+
+    /**
+     * Forgets the consecutive failures.
+     *
+     * It is called when the network comes back: the failures were caused by
+     * the wrong network, not by the router, and the reads must resume
+     * **immediately** instead of waiting for the longest back-off.
+     */
+    fun resetFailures() {
+        consecutiveFailures = 0
+    }
 
     /**
      * Starts the automatic refresh, if it is not already running.
