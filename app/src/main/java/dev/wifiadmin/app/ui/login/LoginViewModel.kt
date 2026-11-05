@@ -75,9 +75,35 @@ class LoginViewModel(
 
     init {
         observeRouterAddress()
-        // The navigation returns here after a confirmed expiry. The message
-        // comes from the repository state, which is the single source of
-        // truth shared by the navigation and this screen.
+        reportExpiryIfAny()
+        observeSessionExpiry()
+    }
+
+    /**
+     * Reports a confirmed expiry to the login screen.
+     *
+     * The repository is the single source of truth, shared with the
+     * navigation. It is **observed** rather than read once: the login view
+     * model may be created before the expiry is detected, and the message
+     * must still appear.
+     */
+    private fun observeSessionExpiry() {
+        viewModelScope.launch {
+            repository.state.collect { state ->
+                if (state.connection is ConnectionState.SessionExpired) {
+                    _result.value = LoginResult.SessionExpired
+                }
+            }
+        }
+    }
+
+    /**
+     * Sets the expiry result at once, before any coroutine runs.
+     *
+     * The screen must show the message on its very first frame: waiting for
+     * the collector would show an empty screen for a moment.
+     */
+    private fun reportExpiryIfAny() {
         if (repository.state.value.connection is ConnectionState.SessionExpired) {
             _result.value = LoginResult.SessionExpired
         }

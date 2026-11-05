@@ -8,6 +8,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * The exact sentence shown when a session has expired.
+ *
+ * It is a constant so the screen and the tests can never drift apart.
+ */
+const val EXPIRY_MESSAGE = "Votre session a expiré. Reconnectez-vous pour continuer."
+
 /** The label shown for a device presence state. */
 fun DevicePresence.label(): String = when (this) {
     DevicePresence.ACTIVE -> "Actif"
@@ -146,8 +153,7 @@ fun RouterUnavailableException.userMessage(): String = when (this) {
         "Le routeur n'a pas répondu à temps."
     is RouterUnavailableException.AuthenticationFailed ->
         "Identifiants refusés par le routeur."
-    is RouterUnavailableException.SessionExpired ->
-        "Votre session a expiré. Reconnectez-vous pour continuer."
+    is RouterUnavailableException.SessionExpired -> EXPIRY_MESSAGE
     is RouterUnavailableException.NotConnected ->
         "Aucune session n'est ouverte."
     is RouterUnavailableException.Cooldown ->

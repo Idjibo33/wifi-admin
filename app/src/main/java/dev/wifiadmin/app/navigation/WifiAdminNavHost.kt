@@ -72,17 +72,28 @@ fun WifiAdminNavHost(
     val currentDestination = backStackEntry?.destination
 
     val routerState by container.routerRepository.state.collectAsStateWithLifecycle()
+    val currentRoute = currentDestination?.route
 
     // A confirmed expiry is the only event that sends the user back to the
-    // login screen. The effect is keyed on the connection state, so it runs
-    // once per transition and cannot loop; the whole back stack is cleared so
-    // Back cannot reopen a protected screen.
-    LaunchedEffect(routerState.connection) {
-        if (shouldReturnToLogin(
-                connection = routerState.connection,
-                currentRoute = navController.currentDestination?.route
-            )
-        ) {
+    // login screen. The whole back stack is cleared so Back cannot reopen a
+    // protected screen.
+    //
+    // The effect is keyed on the connection **and** on the current route: a
+    // tab navigation dispatched at the very instant of the expiry would
+    // otherwise leave the user on an authenticated screen, because the
+    // connection state alone would not have changed again.
+    LaunchedEffect(routerState.connection, currentRoute) {
+        val onLogin = currentRoute == Route.Login.path
+        val mustGoBack = shouldReturnToLogin(
+            connection = routerState.connection,
+            currentRoute = currentRoute,
+        )
+        val onProtectedWithoutSession = shouldLeaveProtectedScreen(
+            connection = routerState.connection,
+            currentRoute = currentRoute,
+        )
+
+        if (!onLogin && (mustGoBack || onProtectedWithoutSession)) {
             navController.navigate(Route.Login.path) {
                 popUpTo(navController.graph.id) { inclusive = true }
                 launchSingleTop = true

@@ -44,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.ui.components.EXPIRY_MESSAGE
 
 /**
  * The connection screen.
@@ -264,7 +265,7 @@ private fun LoginResultMessage(result: LoginResult) {
             isError = true
         )
         LoginResult.SessionExpired -> MessageCard(
-            text = "Votre session a expiré. Reconnectez-vous pour continuer.",
+            text = EXPIRY_MESSAGE,
             isError = false
         )
         LoginResult.UnexpectedResponse -> MessageCard(

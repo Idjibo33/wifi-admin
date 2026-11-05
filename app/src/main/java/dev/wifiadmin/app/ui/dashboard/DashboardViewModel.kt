@@ -2,6 +2,7 @@ package dev.wifiadmin.app.ui.dashboard
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.wifiadmin.app.data.ConnectionState
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.RouterUnavailableException
 import dev.wifiadmin.app.ui.components.userMessage
@@ -94,7 +95,36 @@ class DashboardViewModel(
 
     init {
         seedFromRepository()
+        observeSessionLoss()
         refresh()
+    }
+
+    /**
+     * Purges the displayed data as soon as the session is no longer valid.
+     *
+     * The navigation also leaves the screen, but the two are independent: the
+     * view model must never keep authenticated devices in its own state,
+     * even for the short time the navigation takes to react.
+     */
+    private fun observeSessionLoss() {
+        viewModelScope.launch {
+            repository.state.collect { state ->
+                if (state.connection !is ConnectionState.Connected &&
+                    state.connection !is ConnectionState.Cooldown
+                ) {
+                    _state.value = _state.value.copy(
+                        snapshot = null,
+                        lastRefreshMillis = null,
+                        isFromCache = false,
+                        isSyncFailed = false,
+                        payloadAbsent = false,
+                        hasSnapshot = false,
+                        isLoading = false,
+                        isRefreshing = false,
+                    )
+                }
+            }
+        }
     }
 
     /**

@@ -1100,3 +1100,54 @@ et 3 tests d'expiration/timeout dans `LoginViewModelTest`.
   `docs/MISSION_08_PHONE_TEST.md`.
 - Le rapport consolidé (sécurité, non-régression, revue indépendante) est dans
   `docs/MISSION_08_REPORT.md`.
+
+---
+
+## 19. Validation du scénario d'expiration (05/11/2026)
+
+### 19.1 Contexte
+
+Les cinq premiers scénarios de la Mission 08 ont été validés sur le téléphone
+réel. Restait le **scénario d'expiration de session**, non reproductible sur
+le routeur réel sans y agir.
+
+### 19.2 Décisions
+
+| Sujet | Décision |
+|---|---|
+| Simulation | `tools/fake_router_expiry.py` : 4 modes, dont `renew-refused` (l'expiration), `renew-ok` (pas une expiration), `renew-cooldown` (le gel garde son erreur). |
+| Piège évité | Faire échouer le `cmd 100` **sans** `login_fail` produirait un **cooldown**, pas une expiration. Le faux routeur utilise `login_fail: "fail"`, la forme réelle du firmware. |
+| Preuve protocole | `ZltRouterClientRenewalTest` : le renouvellement est tenté **exactement une fois** (2 `cmd 100`), la lecture n'est pas rejouée après un refus, aucun secret dans le message. |
+| Preuve Android | `SessionExpiryFlowTest` : arrêt des lectures, purge mémoire, retour à la connexion, message exact, blocage du Retour, conservation du fichier, 4 tests négatifs. |
+| Contrat du message | `EXPIRY_MESSAGE` centralisé ; `LoginMessageContractTest` verrouille le texte affiché (vérifié : le test échoue si la phrase est altérée). |
+
+### 19.3 Défauts trouvés par les sous-agents et corrigés
+
+| # | Défaut | Correction |
+|---|---|---|
+| F1 | Une navigation par onglet dispatchée à l'instant de l'expiration pouvait empiler un écran protégé. | Clé composite `(connection, route)` + règle `shouldLeaveProtectedScreen`, qui ne vise qu'une expiration confirmée. |
+| F2 | Les ViewModels conservaient les appareils pendant la fenêtre précédant le pop. | `DashboardViewModel` et `DevicesViewModel` observent l'état et purgent leurs données. |
+| F3 | Le message pouvait ne pas s'afficher si le `LoginViewModel` préexistait à l'expiration. | Observation de l'état du repository + lecture de la valeur courante. |
+
+### 19.4 Tests
+
+| Suite | Tests | Échecs |
+|---|---:|---:|
+| `router-core` | **193** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **126** | 0 |
+| **Total** | **375** | **0** |
+
+Scénarios hors ligne : pare-feu **10/10**, expiration **3/3**, aucune écriture.
+
+### 19.5 Livrables
+
+- `docs/MISSION_08_EXPIRY_VALIDATION.md` — procédure reproductible.
+- `docs/MISSION_08_EXPIRY_REPORT.md` — rapports des sous-agents et verdict.
+- `tools/fake_router_expiry.py`, `tools/fake_router_expiry_scenarios.py`.
+
+### 19.6 Verdict
+
+**Mission 08 validée.** Le bouton Retour et le rendu du message restent à
+constater visuellement sur le téléphone : ce sont des propriétés du framework
+Android, hors de portée d'un test JVM. La Mission 09 n'est pas commencée.

@@ -339,9 +339,9 @@ l'interface de blocage est **exclue du périmètre**.
 
 | Couche | Ce qui est testé |
 |---|---|
-| `router-core` (183) | Le protocole : authentification, expiration de session, fusion DHCP/Wi-Fi, classification, filtre Wi-Fi, frontière lecture seule. |
+| `router-core` (193) | Le protocole : authentification, expiration de session, renouvellement unique, fusion DHCP/Wi-Fi, classification, filtre Wi-Fi, frontière lecture seule. |
 | `poc-cli` (56) | Les rendus console / JSON / diagnostic et l'absence de fuite de données. |
-| `app` (89) | Les ViewModels, la navigation d'expiration, le cache local (`SnapshotStore`), la restauration, la non-régression et la frontière d'architecture. |
+| `app` (126) | Les ViewModels, la navigation d'expiration, le cache local (`SnapshotStore`), la restauration, le contrat du message affiché, la non-régression et la frontière d'architecture. |
 
 **Aucun test n'atteint le routeur réel.** Le transport est soit factice
 (`FakeRouter`), soit un serveur HTTP local sur `127.0.0.1`.
@@ -351,7 +351,10 @@ Les tests du module `app` utilisent un `FakeAdapter` implémentant
 toucher au protocole. Les tests du cache utilisent un répertoire temporaire et
 une horloge injectable : aucun fichier réel de l'application n'est touché.
 
-Total : **328 tests**, 0 échec (mission 08).
+Total : **375 tests**, 0 échec (mission 08, validation de l'expiration incluse).
+
+Le scénario d'expiration est **reproductible hors ligne** : voir
+`docs/MISSION_08_EXPIRY_VALIDATION.md` et `tools/fake_router_expiry.py`.
 
 ---
 
@@ -445,10 +448,27 @@ Sur expiration confirmée :
    **« Votre session a expiré. Reconnectez-vous pour continuer. »** ;
 5. la reconnexion reste **manuelle**.
 
-Un `LaunchedEffect` unique, keyé sur l'état de connexion, applique la règle
-`shouldReturnToLogin` : elle ne se déclenche que pour `SessionExpired` et
-jamais lorsque l'écran de connexion est déjà affiché. Aucune boucle de
-reconnexion automatique n'existe.
+Un `LaunchedEffect` unique, keyé sur l'état de connexion **et** sur la route
+courante, applique la règle `shouldReturnToLogin` : elle ne se déclenche que
+pour `SessionExpired` et jamais lorsque l'écran de connexion est déjà
+affiché. Aucune boucle de reconnexion automatique n'existe.
+
+Une seconde règle, `shouldLeaveProtectedScreen`, sert de **filet de sécurité** :
+si une navigation par onglet est dispatchée à l'instant exact de l'expiration,
+elle ne peut pas empiler un écran protégé au-dessus de l'écran de connexion.
+Elle ne se déclenche elle aussi que sur une expiration confirmée.
+
+Trois verrous complémentaires rendent l'expiration fiable :
+
+| Verrou | Emplacement |
+|---|---|
+| L'adaptateur est détaché, le `sessionId` du client passe à `null` | `ZltRouterAdapter.disconnect()` |
+| Un compteur de génération invalide les lectures en vol | `RouterRepository.generation` |
+| La garde d'état refuse toute lecture hors session | `RouterRepository.refresh()` |
+
+Les ViewModels des écrans authentifiés **observent** l'état du repository et
+purgent leur snapshot dès que la session n'est plus valide : la sécurité ne
+repose pas sur la seule navigation.
 
 | Situation | État | Navigation |
 |---|---|---|
