@@ -7,6 +7,7 @@ import dev.wifiadmin.router.RouterNetworkException
 import dev.wifiadmin.router.RouterProtocolException
 import dev.wifiadmin.router.RouterSettings
 import dev.wifiadmin.router.ZltRouterClient
+import java.net.SocketTimeoutException
 
 /**
  * The ZLT adapter.
@@ -41,31 +42,46 @@ class ZltRouterAdapter : RouterAdapter {
         } catch (e: RouterCooldownException) {
             throw RouterUnavailableException.Cooldown(e.retryAfterSeconds)
         } catch (e: RouterNetworkException) {
-            throw RouterUnavailableException.Unreachable(e)
+            throw e.toAppFailure()
         } catch (e: RouterProtocolException) {
             throw RouterUnavailableException.UnexpectedResponse(e)
         }
     }
 
     override suspend fun fetchDevices(): DeviceSnapshot {
-        val active = client
-            ?: throw RouterUnavailableException.AuthenticationFailed(
-                null)
+        val active = client ?: throw RouterUnavailableException.NotConnected()
         return try {
             active.fetchDevices()
         } catch (e: RouterAuthenticationException) {
-            throw RouterUnavailableException.AuthenticationFailed(e)
+            // A read carries no password: this can only be a session that
+            // could not be renewed. Drop it so no further read reuses it.
+            disconnect()
+            throw RouterUnavailableException.SessionExpired(e)
         } catch (e: RouterCooldownException) {
             throw RouterUnavailableException.Cooldown(e.retryAfterSeconds)
         } catch (e: RouterNetworkException) {
-            throw RouterUnavailableException.Unreachable(e)
+            throw e.toAppFailure()
         } catch (e: RouterProtocolException) {
             throw RouterUnavailableException.UnexpectedResponse(e)
         }
     }
 
     override fun disconnect() {
-        client?.invalidateSession()
+        // Detach first: `invalidateSession()` waits for the client's lock, and
+        // a concurrent `connect()` must not have its new client cleared by the
+        // tail of this call.
+        val previous = client
         client = null
+        previous?.invalidateSession()
+    }
+
+    private fun RouterNetworkException.toAppFailure(): RouterUnavailableException {
+        val timedOut = generateSequence<Throwable>(this) { it.cause }
+            .any { it is SocketTimeoutException }
+        return if (timedOut) {
+            RouterUnavailableException.Timeout(this)
+        } else {
+            RouterUnavailableException.Unreachable(this)
+        }
     }
 }

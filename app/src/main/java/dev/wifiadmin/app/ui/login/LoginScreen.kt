@@ -44,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.ui.components.EXPIRY_MESSAGE
 
 /**
  * The connection screen.
@@ -257,6 +258,15 @@ private fun LoginResultMessage(result: LoginResult) {
             text = "Le routeur est injoignable. Vérifiez que le téléphone est " +
                 "connecté au Wi-Fi du routeur, puis réessayez.",
             isError = true
+        )
+        LoginResult.Timeout -> MessageCard(
+            text = "Le routeur n'a pas répondu à temps. Vérifiez le Wi-Fi, " +
+                "puis réessayez.",
+            isError = true
+        )
+        LoginResult.SessionExpired -> MessageCard(
+            text = EXPIRY_MESSAGE,
+            isError = false
         )
         LoginResult.UnexpectedResponse -> MessageCard(
             text = "Le routeur a répondu de façon inattendue.",

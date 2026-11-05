@@ -1222,7 +1222,7 @@ Et, pour `cmd 132` (WPS), la convention est **inverse** : `subcmd '0'` =
 
 ## 9quater. Résultat de la lecture réelle : `cmd 278` est indisponible
 
-> **Statut : DISPONIBLE (firmware Airtel 6.07.0).**
+> **Statut : INDISPONIBLE (firmware Airtel 6.07.0).**
 
 Le test réel, exécuté par l'utilisateur sur son routeur, a renvoyé sur les
 deux bandes :
@@ -1243,7 +1243,7 @@ et `:454-455`, pour `cmd 25` — les limites de débit).
 | La commande est **exécutée** par le firmware | ❌ refusée avant exécution |
 | Le filtre Wi-Fi est-il utilisable ? | **Non**, sur ce firmware et ce compte |
 | L'interface web le propose-t-elle ? | **Non** — aucun menu de contrôle d'accès Wi-Fi n'est présenté |
-| Le filtrage MAC **pare-feu** (`23`) est-il disponible ? | **Indéterminé** — le menu est visible, mais le comportement n'est pas validé |
+| Le filtrage MAC **pare-feu** (`23`) est-il disponible ? | **`UNAVAILABLE`** — étude close le 30/10/2026 ; voir `FIREWALL_ANALYSIS.md` §13ter. |
 
 ### 9quater.2 Décisions prises
 
@@ -1261,11 +1261,16 @@ et `:454-455`, pour `cmd 25` — les limites de débit).
    Wi-Fi** : ce sont deux mécanismes distincts (§5bis.1), et seul le second
    empêche une association.
 
-### 9quater.3 Étude distincte à mener : le filtrage pare-feu (`cmd 23`)
+### 9quater.3 Étude distincte menée puis close : le filtrage pare-feu (`cmd 23`)
+
+> **Statut : `UNAVAILABLE` — clôture du 30/10/2026.** L'étude a bien été
+> menée ; la référence est `FIREWALL_ANALYSIS.md` §13ter. Les questions
+> ci-dessous sont conservées comme historique du raisonnement, pas comme des
+> pistes encore ouvertes.
 
 Le menu **Pare-Feu → Règles de filtrage → Filtrage MAC** est visible sur le
 routeur. C'est le seul mécanisme de restriction accessible. Une étude **en
-lecture seule** est donc nécessaire pour déterminer :
+lecture seule** a été menée pour déterminer :
 
 - si `GET 23` est autorisé (ou s'il renvoie aussi `LIMITED_ACCESS`) ;
 - si les règles existantes sont lisibles ;
@@ -1273,10 +1278,10 @@ lecture seule** est donc nécessaire pour déterminer :
 - **surtout** : si ce mécanisme filtre le **trafic Internet** d'un appareil
   sans empêcher son **association** Wi-Fi.
 
-> Cette étude doit rester **en lecture seule** tant que le comportement n'est
-> pas validé sur un **appareil secondaire**. Le client `MacFilterClient` du
-> pare-feu (`cmd 23`) n'est d'ailleurs pas encore implémenté — seule la
-> lecture du filtre Wi-Fi l'a été.
+> Cette étude est **close** : la capacité est `UNAVAILABLE` sur le firmware
+> 6.07.0 (voir `FIREWALL_ANALYSIS.md` §13ter). Le client `MacFilterClient` du
+> pare-feu (`cmd 23`) existe comme **archive de lecture seule** et ses tests
+> sont conservés, mais il n'est **pas** exposé par l'application.
 
 ### 9quater.4 Conséquence pour l'application
 
@@ -1292,9 +1297,11 @@ L'application doit :
 
 ## 9ter. Procédure de blocage et de déblocage d'un appareil secondaire
 
-> **Aucune de ces étapes ne doit être exécutée avant validation du protocole
-> de blocage.** La procédure est écrite pour être appliquée plus tard, avec
-> votre accord.
+> **Procédure archivée — non applicable.** La capacité de blocage pare-feu est
+> `UNAVAILABLE` sur ce firmware (clôture du 30/10/2026, voir
+> `FIREWALL_ANALYSIS.md` §13ter). Aucune de ces étapes ne peut être exécutée
+> aujourd'hui ; elles sont conservées pour un autre firmware, avec votre accord
+> explicite.
 
 ### 9ter.1 Préparation (à faire AVANT toute écriture)
 

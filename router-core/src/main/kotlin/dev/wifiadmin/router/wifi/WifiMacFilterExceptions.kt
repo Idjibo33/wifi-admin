@@ -49,6 +49,18 @@ sealed class WifiMacValidationException(
     )
 
     /**
+     * The state to write was never read from the router.
+     *
+     * The router delivered no payload, so the filter's mode is unknown.
+     * Writing it would send an invented mode to the router.
+     */
+    class UnknownState(
+        val band: WifiBandFilter,
+    ) : WifiMacValidationException(
+        "Refusing to write $band: its state was never read from the router"
+    )
+
+    /**
      * The state read from the router no longer matches the state the caller
      * intended to modify.
      *
@@ -107,11 +119,16 @@ sealed class WifiMacCompatibilityException(
     )
 
     /** The `macfilter` value is not one of `close`, `allow`, `deny`. */
+    /**
+     * The router reported a filter mode this client does not know.
+     *
+     * The raw value is deliberately **not** kept: it is free text chosen by
+     * the router, and the CLI prints exception messages.
+     */
     class UnknownMode(
         val band: WifiBandFilter,
-        val value: String,
     ) : WifiMacCompatibilityException(
-        "Unknown MAC filter mode '$value' for $band; " +
+        "Unknown MAC filter mode for $band; " +
             "this firmware may use a mode this client does not know"
     )
 

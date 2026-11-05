@@ -1,16 +1,20 @@
 package dev.wifiadmin.app.ui.devices
 
+import dev.wifiadmin.app.data.RefreshCoordinator
+import dev.wifiadmin.app.data.ReadFreshnessPolicy
 import dev.wifiadmin.app.data.RouterAdapter
+import dev.wifiadmin.app.data.TestHarness
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.DeviceSignal
 import dev.wifiadmin.router.DeviceSnapshot
 import dev.wifiadmin.router.RouterDevice
 import dev.wifiadmin.router.WifiBand
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -28,9 +32,50 @@ class DevicesViewModelTest {
     /**
      * A repository whose network calls run on the test dispatcher, so the
      * coroutines stay under the control of the test.
+     *
+     * The session is opened first: [RouterRepository.refresh] refuses to read
+     * without one, exactly like the production flow where the user signs in
+     * before any device list is fetched.
      */
-    private fun testRepository(adapter: RouterAdapter) =
-        RouterRepository(adapter, dispatcher)
+    private suspend fun testRepository(adapter: RouterAdapter): RouterRepository {
+        val repository = RouterRepository(
+            adapter = adapter,
+            ioDispatcher = dispatcher,
+            // Every read reaches the adapter: the freshness window must not
+            // hide a call the test is asserting on.
+            freshness = ReadFreshnessPolicy { false },
+        )
+        repository.connect("192.168.1.1", "admin", "secret")
+        return repository
+    }
+
+    /**
+     * Builds the view model and starts the polling, exactly as the screen
+     * does when it becomes visible.
+     *
+     * The view model does not read on its own any more: the reads belong
+     * to the coordinator, which is shared with the dashboard.
+     */
+    private suspend fun viewModel(
+        adapter: RouterAdapter,
+        scope: CoroutineScope,
+    ): DevicesViewModel = viewModelAndCoordinator(adapter, scope).first
+
+    /**
+     * Builds the view model and the coordinator that shares the reads.
+     *
+     * The polling loop never ends on its own: the test stops it once the
+     * first read has settled.
+     */
+    private suspend fun viewModelAndCoordinator(
+        adapter: RouterAdapter,
+        scope: CoroutineScope,
+    ): Pair<DevicesViewModel, RefreshCoordinator> {
+        val repository = testRepository(adapter)
+        val coordinator = TestHarness.coordinator(repository, scope)
+        coordinator.startPolling()
+        return DevicesViewModel(repository, coordinator) to coordinator
+    }
 
     @Before
     fun setUp() {
@@ -102,10 +147,11 @@ class DevicesViewModelTest {
 
     @Test
     fun `the search matches the name regardless of the case`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setQuery("télé")
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(1, vm.state.value.filteredDevices.size)
         assertEquals("Téléphone", vm.state.value.filteredDevices.first().name)
@@ -113,10 +159,11 @@ class DevicesViewModelTest {
 
     @Test
     fun `the search matches the ip address regardless of the case`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setQuery("192.168.1.12")
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(1, vm.state.value.filteredDevices.size)
         assertEquals("192.168.1.12", vm.state.value.filteredDevices.first().ip)
@@ -124,10 +171,11 @@ class DevicesViewModelTest {
 
     @Test
     fun `the search matches the mac address regardless of the case`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setQuery("AA:BB:CC:DD:EE:02")
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(1, vm.state.value.filteredDevices.size)
         assertEquals("aa:bb:cc:dd:ee:02", vm.state.value.filteredDevices.first().mac)
@@ -135,20 +183,22 @@ class DevicesViewModelTest {
 
     @Test
     fun `an empty query keeps every device`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setQuery("")
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(sampleDevices.size, vm.state.value.filteredDevices.size)
     }
 
     @Test
     fun `the wifi filter keeps only the associated devices`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setFilter(DeviceFilter.WIFI)
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         val result = vm.state.value.filteredDevices
         assertEquals(2, result.size)
@@ -157,10 +207,11 @@ class DevicesViewModelTest {
 
     @Test
     fun `the wired filter keeps only the cabled devices`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setFilter(DeviceFilter.WIRED)
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         val result = vm.state.value.filteredDevices
         assertEquals(1, result.size)
@@ -169,29 +220,32 @@ class DevicesViewModelTest {
 
     @Test
     fun `the all filter keeps every device`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         vm.setFilter(DeviceFilter.ALL)
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(sampleDevices.size, vm.state.value.filteredDevices.size)
     }
 
     @Test
     fun `the query and the filter combine`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(sampleDevices))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
         // The only match is an associated device, so the wired filter empties
         // the result.
         vm.setQuery("Téléphone")
         vm.setFilter(DeviceFilter.WIRED)
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertTrue(vm.state.value.filteredDevices.isEmpty())
 
         // And the matching filter keeps it.
         vm.setFilter(DeviceFilter.WIFI)
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(1, vm.state.value.filteredDevices.size)
         assertEquals("Téléphone", vm.state.value.filteredDevices.first().name)
@@ -200,10 +254,11 @@ class DevicesViewModelTest {
     @Test
     fun `the refresh populates the devices from the repository`() = runTest(dispatcher) {
         val adapter = FakeAdapter(DeviceSnapshot(sampleDevices))
-        val vm = DevicesViewModel(testRepository(adapter))
+        val (vm, coordinator) = viewModelAndCoordinator(adapter, this)
 
         vm.refresh()
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertEquals(sampleDevices.size, vm.state.value.devices.size)
         assertEquals(sampleDevices.size, vm.state.value.filteredDevices.size)
@@ -212,10 +267,11 @@ class DevicesViewModelTest {
 
     @Test
     fun `an empty device list yields an empty result`() = runTest(dispatcher) {
-        val vm = DevicesViewModel(testRepository(FakeAdapter(DeviceSnapshot(emptyList()))))
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(emptyList())), this)
 
         vm.refresh()
-        advanceUntilIdle()
+        runCurrent()
+        coordinator.stopPolling()
 
         assertTrue(vm.state.value.devices.isEmpty())
         assertTrue(vm.state.value.filteredDevices.isEmpty())
@@ -223,12 +279,18 @@ class DevicesViewModelTest {
     }
 
     @Test
-    fun `the refresh is triggered when the view model is created`() = runTest(dispatcher) {
+    fun `the refresh is triggered when the polling starts`() = runTest(dispatcher) {
         val adapter = FakeAdapter(DeviceSnapshot(sampleDevices))
 
-        DevicesViewModel(testRepository(adapter))
-        advanceUntilIdle()
+        val (vm, coordinator) = viewModelAndCoordinator(adapter, this)
+        runCurrent()
+        coordinator.stopPolling()
 
-        assertEquals(1, adapter.fetchCalls)
+        assertEquals(
+            "the screen must show the devices without waiting for thirty seconds",
+            1,
+            adapter.fetchCalls
+        )
+        assertEquals(sampleDevices.size, vm.state.value.devices.size)
     }
 }

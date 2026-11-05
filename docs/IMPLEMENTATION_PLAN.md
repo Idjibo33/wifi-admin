@@ -412,9 +412,9 @@ Présence du signal (device) :
 
 | # | Règle | Mise en œuvre |
 |---|---|---|
-| **S1** | **Allowlist stricte des commandes** : `{232, 100, 223, 224, 225}` et **rien d'autre**. | `ZltRouterClient` n'expose que `login()` et `fetchDevices()`. Il n'y a **aucune** méthode générique `query(cmdId)` accessible depuis l'extérieur du module : aucune commande arbitraire ne peut être émise. |
-| **S2** | **Aucune commande mutante.** | Ni reboot (`cmd 6`), ni DNS (`cmd 3`), ni Wi-Fi (`cmd 2`/`cmd 211`), ni mode avion (`cmd 226`), ni données mobiles (`cmd 222`), ni verrouillage de bande (`cmd 161`) ou de cellule (`cmd 160`), ni QoS (`cmd 25`), ni `cmd 233`. |
-| **S3** | **Aucune règle / blocage MAC.** | Le module ne produit qu'une liste en lecture ; aucune fonction de blocage n'existe. |
+| **S1** | **Allowlist stricte des commandes** : `{232, 100, 223, 224, 225}` en phase 1, étendue en mission 04 à `{23, 30}` **en lecture seule**. | `ZltRouterClient` n'expose publiquement que `login()` et `fetchDevices()`. Les commandes du pare-feu passent par une porte `internal readOnly(cmd)` qui refuse tout numéro hors allowlist **avant** de construire la requête. Aucune méthode publique générique `query(cmdId)`. |
+| **S2** | **Aucune commande mutante.** | Ni reboot (`cmd 6`), ni DNS (`cmd 3`), ni Wi-Fi (`cmd 2`/`cmd 211`), ni mode avion (`cmd 226`), ni données mobiles (`cmd 222`), ni verrouillage de bande (`cmd 161`) ou de cellule (`cmd 160`), ni QoS (`cmd 25`), ni `cmd 233`, ni `cmd 20` (application des règles pare-feu). |
+| **S3** | **Aucune écriture de règle / blocage MAC.** | Le module ne fait que **lire** le pare-feu (`GET 23`, `GET 30`) ; aucune fonction de blocage n'existe. Le client de lecture n'expose ni `cmd`, ni `method`, ni `token`. |
 | **S4** | **Le mot de passe n'est jamais passé en argument de ligne de commande.** | Il est lu **de manière interactive** sur le terminal (prompt non écho). Un argument `--password` est **proscrit** (il fuiterait dans l'historique du shell et dans `ps`). Le test `login never sends the password in clear text` vérifie que le corps de la requête `cmd 100` ne contient jamais le mot de passe en clair. |
 | **S5** | **Aucun secret dans les logs ni dans la sortie JSON.** | Voir G1 et §5.4. |
 | **S6** | **Aucun rejeu aveugle d'écriture.** | Sans objet en phase 1 (lecture seule) ; la règle est documentée et devra être respectée si une écriture est ajoutée. |
@@ -457,7 +457,7 @@ Présence du signal (device) :
 | T13 | `malformed json raises a protocol exception` | Une réponse non-JSON ⇒ `RouterProtocolException`. |
 | T14 | `a non-success reply raises a protocol exception` | Une réponse `success: false` non gérée ⇒ `RouterProtocolException`. |
 | T15 | `an http error reply raises a protocol exception` | Une erreur HTTP ⇒ `RouterProtocolException` (et non un `{}` silencieux). |
-| T16 | `only the read commands are ever sent` | **Test d'allowlist** : sur l'exécution complète du POC, les `cmd` émis appartiennent à `{232, 100, 223, 224, 225}` — **c'est le test de sécurité central**. |
+| T16 | `only the read commands are ever sent` | **Test d'allowlist** : sur l'exécution complète du POC, les `cmd` émis appartiennent à `{232, 100, 223, 224, 225}` (plus `{23, 30}` si `--firewall-filter`) — **c'est le test de sécurité central**. |
 | T17 | `dhcp entries are parsed into devices` | Les entrées `cmd 223` sont bien converties en appareils. |
 | T18 | `the hostname NULL is normalized to Unknown Device` | Le littéral `"NULL"` ⇒ `"Unknown Device"`. |
 | T19 | `a blank hostname is normalized to Unknown Device` | Un nom vide ⇒ `"Unknown Device"`. |
@@ -542,19 +542,17 @@ tasks.test {
 
 ### 9.7 Couverture actuelle
 
-| Module de test | Nombre de tests |
-|---|---|
-| `ZltRouterClientTest` | 32 |
-| `DeviceMergerTest` | 17 |
-| `WifiMacFilterClientTest` | 30 |
-| `WifiFilterReadOnlyBoundaryTest` | 5 |
-| `OkHttpRouterTransportTest` | 3 |
-| `RendererTest` | 6 |
-| `DiagnosticRendererTest` | 6 |
-| `WifiFilterRendererTest` | 4 |
-| `LoginViewModelTest` | 8 |
-| `DevicesViewModelTest` | 11 |
-| **Total** | **122** |
+| Module | Tests | Échecs |
+|---|---|---|
+| `router-core` | **183** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **35** | 0 |
+| **Total** | **274** | **0** |
+
+Le détail par classe est dans les rapports JUnit
+(`*/build/test-results/`). Les sections 14.4, 15.5 et 16.4 conservent les
+comptes **à la date de chaque mission** ; le compte de référence est celui
+ci-dessus, repris en §17.4.
 
 | Module | Total |
 |---|---|
@@ -757,3 +755,466 @@ Toutes les commandes d'écriture (`cmd 2`, `cmd 3`, `cmd 6`, `cmd 25`, `cmd 160`
 | **R5** | **Dérive du firmware 6.07.0 par rapport au firmware de référence.** | Un champ pourrait manquer ou changer de type. | Toute absence de champ est traitée comme **valeur inconnue**, jamais comme une valeur par défaut inventée. |
 | **R6** | **Le compte `root` dispose de privilèges que la phase 1 n'exploite pas.** | Surface d'attaque élargie en cas de fuite d'identifiants. | Vérifier en phase 2 si un compte non-admin suffit pour 223/224/225 (règle **S9**) ; le mot de passe n'est de toute façon jamais transmis ailleurs qu'au routeur. |
 | **R7** | **Le prompt du mot de passe désactive l'écho du terminal** (`stty -echo`) quand l'entrée est un vrai terminal. | Le mot de passe ne s'affiche pas à l'écran pendant la saisie. | Sur un **pipe** (script, test), le terminal n'est pas touché et l'écho n'a rien à masquer. Un `SIGKILL` brutal peut laisser l'écho désactivé ; un `SIGINT` (Ctrl-C) est couvert par le *shutdown hook*. L'app Android utilisera un champ `SecureTextField`. Aucune trace n'est écrite dans l'historique du shell. |
+
+---
+
+## 13. Mission 04 — pare-feu `cmd 23` (lecture seule)
+
+Cette section complète le plan de phase 1 ; elle ne le remplace pas.
+
+### 13.1 Périmètre livré
+
+| Élément | Fichier | État |
+|---|---|---|
+| Analyse et niveaux de preuve | `docs/FIREWALL_ANALYSIS.md` | Livré |
+| Client de lecture seule | `router-core/.../firewall/FirewallMacFilterClient.kt` | Livré |
+| Modèles | `router-core/.../firewall/FirewallMacModels.kt` | Livré |
+| Parseur | `router-core/.../firewall/FirewallMacFilterParser.kt` | Livré |
+| Porte de lecture allowlistée | `ZltRouterClient.readOnly(cmd)` (`internal`) | Livré |
+| Erreur `LIMITED_ACCESS` | `RouterFeatureUnavailableException` | Livré |
+| Tests client + parseur | `router-core/src/test/.../firewall/` | 38 tests |
+| Diagnostic CLI | `--firewall-filter` + `FirewallFilterRenderer` | Livré |
+| Faux routeur | `GET 23` / `GET 30`, écritures refusées sans mutation | Livré |
+| Interface Android | — | **Non modifiée** |
+| Écriture / boutons Bloquer | — | **Interdit** |
+
+### 13.2 Commandes
+
+- Lecture : `GET 23`, `GET 30`.
+- Jamais : `POST 23`, `POST 30`, `cmd 20`, `cmd 233`.
+- `cmd 28` n'est pas utilisé : `cmd 30` donne la même information pour IPv4
+  et IPv6.
+
+### 13.3 Tests
+
+| Suite | Total |
+|---|---|
+| `router-core` | 131 |
+| `poc-cli` | 24 |
+| `app` | 26 |
+| **Total** | **181** |
+
+Le test de frontière échoue **avant l'envoi** si une écriture est tentée
+(`AssertionError` dans le transport, handlers pièges dans `FakeRouter`,
+multiset exact des couples `(cmd, method)`).
+
+### 13.4 Décision d'architecture
+
+Repli additif retenu : `ZltRouterClient` conserve la session et expose une
+porte `internal readOnly(cmd)` allowlistée. L'extraction d'un `ZltSession`
+commun est reportée jusqu'à validation réelle : elle déplacerait ~200 lignes
+du fichier le plus critique pour un bénéfice nul tant que `GET 23` n'est pas
+prouvé.
+
+### 13.5 Condition de sortie
+
+La fonctionnalité n'est **pas** opérationnelle. Elle le deviendra seulement
+si :
+
+1. `GET 23` et `GET 30` réussissent sur le routeur réel (pas de
+   `LIMITED_ACCESS`) ;
+2. la forme réelle de `datas` est confirmée ;
+3. la portée du filtre (Internet / LAN / administration) est mesurée ;
+4. les conditions **G0–G11** de `FIREWALL_ANALYSIS.md` §8.2 sont satisfaites.
+
+---
+
+## 14. Mission 05 — diagnostic des réponses `GET 23` / `GET 30`
+
+### 14.1 Constat
+
+La lecture réelle a renvoyé, pour `GET 23` **et** `GET 30`, une réponse
+`{cmd, message, success}` **sans `datas`**. Le POC affichait « règles lues 0 »
+et « (aucune règle) » : une **affirmation fausse** sur l'état du routeur.
+
+### 14.2 Cause
+
+`read()` ne vérifiait que `success`. La présence de la charge utile n'était
+jamais contrôlée, et le parseur transformait l'absence de `datas` en
+`emptyList()`.
+
+### 14.3 Corrections
+
+| # | Correction |
+|---|---|
+| 1 | Quatre états distincts : `DATA_RECEIVED`, `RESPONSE_INVALID`, `FEATURE_UNAVAILABLE`, `UNKNOWN`. Un nombre de règles n'est affiché que dans le premier. |
+| 2 | `datas: null` et `datas: []` sont distingués (le test qui affirmait la confusion a été inversé). |
+| 3 | `LIMITED_ACCESS` est un refus **même quand `success: true`** — bug actif. |
+| 4 | Liste blanche stricte pour `message` / `error` ; tout le reste devient `<message>`. |
+| 5 | Enveloppe d'observation : `success`, catégorie de `message`, type de `datas`, présence d'erreur, clés, `cmd` renvoyé — **aucun contenu brut**. |
+| 6 | Les noms de clés affichés passent par une liste blanche. |
+| 7 | Le diagnostic liste les commandes **réellement envoyées** (journal au niveau transport), plus une liste de *possibles* qui n'est plus affichée comme un historique. |
+| 8 | `language` est désormais envoyé avec chaque requête, comme le fait l'interface web du routeur (`main.js:1799-1801`). |
+| 9 | Une lecture qui échoue n'annule plus l'autre. |
+| 10 | Test-frontière exhaustif : les 401 numéros hors allowlist sont rejetés sans requête. |
+
+### 14.4 Tests (à la date de la mission 05)
+
+| Suite | Total |
+|---|---|
+| `router-core` | **183** |
+| `poc-cli` | **39** |
+| `app` | **26** |
+| **Total** | **225** |
+
+Huit scénarios de bout en bout hors ligne (`tools/fake_router_scenarios.py`) :
+tous conformes, **aucune tentative d'écriture** enregistrée.
+
+### 14.5 Faisabilité (historique — tranchée en §17)
+
+> **Périmé.** Cette section décrivait trois pistes de lecture encore ouvertes.
+> L'observation de l'interface officielle du 30/10/2026 les a **toutes
+> fermées** : la capacité est `UNAVAILABLE`. Voir §17.
+
+---
+
+## 15. Mission 06 — validation de l'interopérabilité
+
+### 15.1 Conformité de l'enveloppe
+
+Le JavaScript **original** du routeur a été retrouvé en cache local et
+vérifié. L'enveloppe de `ZltRouterClient.send()` est conforme à
+`Page.postJSON` (`main.js:1785-1818`) pour les sept champs : `cmd`,
+`method`, `sessionId`, `language`, `token` (absent en GET), `subcmd`,
+`datas`.
+
+**Le hash du mot de passe n'est pas affecté** : `login.js:238` calcule
+`sha256(token + passwd)`, et `language` est ajouté **après**, juste avant la
+sérialisation. Un test le vérifie explicitement.
+
+### 15.2 Quatre défauts corrigés (trouvés par les audits)
+
+| # | Défaut | Correction |
+|---|---|---|
+| **B1** | Les noms de clés de la réponse étaient affichés bruts : un routeur pouvait nommer un champ d'après un secret, ou y mettre un saut de ligne et **forger une ligne du rapport**. | `SafeKeyNames` : liste blanche exacte, troncature au préfixe, suppression des caractères de contrôle. Partagé par les deux renderers. |
+| **B2** | `cmd 223/224/225` sans charge utile → « 0 appareil » ; `cmd 278` sans `datas` → « filtre désactivé ». | `DeviceSnapshot.payloadAbsent` ; `WifiMacFilterState.mode` nullable ; rendu `INCONNU` ; écriture d'un état inconnu **refusée** ; **propagé à l'app Android**. |
+| **B3** | Le `message`, le `macfilter` et le `wifiStatus` bruts entraient dans des exceptions affichées par le CLI. | Type fermé `WifiFilterError` ; `describeReply` à catégories fermées ; plus aucune valeur brute dans une exception. |
+| **O-1** | **OkHttp suivait les redirections** : un `307` rejouait le corps du `POST 100` (hash du mot de passe, `sessionId`) vers l'hôte désigné par la réponse. | `followRedirects(false)`, `followSslRedirects(false)`. Test de loopback : le `307` n'est pas suivi et le corps n'est pas rejoué. |
+
+### 15.3 Autres correctifs
+
+`language` envoyé par le client Wi-Fi ; `cmd 28` ajouté à l'allowlist
+déclarée du CLI ; handler `cmd 28` et scénario de bout en bout ; tripwire
+`POST 28` / `POST 30` ; le journal affiche les **multiplicités** (le double
+login du client Wi-Fi est visible).
+
+### 15.4 Variantes de lecture
+
+Trois formes, chacune changeant **une seule chose** : `default`, `getfun`
+(ajoute `getfun: true` à `GET 23`), `cmd28` (remplace `GET 30` par
+`GET 28`). `getfun` reste opt-in : le défaut ne change pas.
+
+### 15.5 Tests (à la date de la mission 06)
+
+| Suite | Total |
+|---|---|
+| `router-core` | **183** |
+| `poc-cli` | **56** |
+| `app` | **28** |
+| **Total** | **267** |
+
+Scénarios hors ligne : 9/9 conformes, aucune tentative d'écriture.
+
+### 15.6 Défauts connus restants
+
+Le double login du client Wi-Fi (hash transmis deux fois), le rejeu
+aveugle d'une écriture Wi-Fi après expiration de session, et le code mort
+`redact()`. Documentés dans `FIREWALL_ANALYSIS.md` §15bis. Aucun n'est
+atteignable depuis le chemin de lecture.
+
+---
+
+## 16. Mission 07 — investigation finale de l'interopérabilité
+
+### 16.1 Corrections
+
+| # | Correction | Justification |
+|---|---|---|
+| 1 | La variante `getfun` envoie **`getfun: "true"`** (chaîne) au lieu d'un booléen JSON. | Ce firmware encode tous ses drapeaux en chaîne (`acceptAll: "true"`, `isAutoUpgrade: "0"`, `subcmd: '1'`). Un booléen aurait été ignoré. |
+| 2 | Le faux routeur reproduit la réponse **réelle** (`message` vide). | Une fixture qui s'écarte de la réalité ne prouve rien. |
+| 3 | Nouveau scénario `fw-msg-empty-datas` + tests `message` vide / null / absent. | Prouve que le message vide ne dégrade pas la distinction liste vide / absence. |
+| 4 | `tools/anonymise_observation.py` : anonymisation **locale** des observations DevTools. | Projection structurelle + filet qui refuse tout rapport contenant une valeur secrète. |
+
+### 16.2 Une conclusion de la mission 05 est renversée
+
+L'hypothèse « `language` a changé la réponse du firmware » **n'est pas
+soutenue** : le diagnostic n'affiche jamais la valeur du `message`, et
+`language` a été ajouté le **30/10**, après l'observation du **29/10**. La
+comparaison « avant / après » n'a jamais été faite sur le routeur.
+
+Le `message` vide est un **témoin discriminant**, pas une preuve de
+changement de comportement.
+
+### 16.3 Recommandation
+
+**Une seule** observation de l'interface officielle
+(`DEVTOOLS_PROCEDURE.md`), puis **arrêt** :
+
+- si l'interface reçoit `datas` et nous non → correction ciblée ;
+- si l'interface reçoit la **même** réponse creuse → le firmware ne sert pas
+  cette commande à ce compte → **abandonner**, comme pour `cmd 278`.
+
+### 16.4 Tests (à la date de la mission 07)
+
+| Suite | Tests | Échecs |
+|---|---|---|
+| `router-core` | **183** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **28** | 0 |
+| **Total** | **267** | **0** |
+
+Scénarios hors ligne : **10/10** conformes, aucune tentative d'écriture.
+
+> Ces chiffres sont ceux de la mission 07 **avant** l'ajout des tests de
+> frontière d'architecture. Le compte final de la clôture est en §17.4.
+
+---
+
+## 17. Clôture — filtrage MAC `UNAVAILABLE` (30/10/2026)
+
+### 17.1 Verdict
+
+> **La capacité de filtrage MAC du pare-feu est `UNAVAILABLE` sur le
+> firmware 6.07.0 d'Airtel Niger.**
+
+Ce n'est **pas** `UNVERIFIED` : le doute est levé. L'interface web
+**officielle** du routeur, observée dans Chrome DevTools (*Pare-Feu → Règles
+de filtrage → Filtrage MAC*), reçoit **exactement** la même réponse que notre
+client :
+
+```json
+{"success": true, "cmd": 23, "message": ""}
+```
+
+HTTP 200, **sans `datas`**. Deux clients indépendants, deux codes différents,
+même réponse : la requête n'est pas en cause.
+
+### 17.2 Décisions
+
+| Objet | Décision |
+|---|---|
+| Code d'analyse `router-core/.../firewall/` | **Conservé** avec ses tests, comme archive. Jamais appelé par l'app. |
+| Diagnostic CLI (`--firewall-filter`, `--firewall-variant`) | **Conservé mais gelé.** |
+| Fonctionnalité Android | **Non exposée** : aucun écran, aucun bouton, aucun import. |
+| Écriture (`POST 23` / `POST 30` / `cmd 20`) | **Interdite.** Jamais tentée. |
+| Variantes `getfun`, `cmd 28`, `language` | **Interdites** sans fait nouveau (§17.3). |
+| MVP Android | **Inchangé**, sauf corrections indispensables. |
+
+### 17.3 Ce qui rouvrirait le dossier
+
+Un **fait nouveau**, pas une hypothèse : autre firmware, autre opérateur ou
+autre compte dont l'interface officielle reçoit des données, ou capture
+réseau montrant une requête différente de la nôtre.
+
+### 17.4 Tests de clôture
+
+| Suite | Tests | Échecs |
+|---|---|---|
+| `router-core` | **183** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **35** | 0 |
+| **Total** | **274** | **0** |
+
+Scénarios hors ligne : **10/10** conformes, **aucune** tentative d'écriture.
+
+Les deux tests supplémentaires de `app` matérialisent la frontière : l'app
+n'importe **jamais** `dev.wifiadmin.router.firewall` ni
+`dev.wifiadmin.router.wifi`, `RouterAdapter` n'expose **aucune** opération
+mutante, et aucun écran ne propose « Bloquer » / « Débloquer ».
+
+### 17.5 Nettoyage
+
+- `ZltRouterClient.redact()`, la constante `HEX_TOKEN_PATTERN` et le champ
+  `challengeToken` (qui n'existait que pour cette fonction morte) ont été
+  **supprimés**.
+- Les KDoc de `FirewallMacFilterClient`, `FirewallMacFilterParser` et
+  `FirewallMacModels` ne parlent plus d'une « fonctionnalité à venir » : ils
+  enregistrent le verdict `UNAVAILABLE`.
+- `docs/FIREWALL_ANALYSIS.md` §13ter est la référence de la clôture.
+
+---
+
+## 18. Mission 08 — dernier instantané et expiration de session (31/10/2026)
+
+### 18.1 Objectif
+
+Améliorer la fiabilité du MVP Android **sans élargir le périmètre** :
+
+- conserver localement le dernier état valide des appareils et l'afficher
+  pendant la première synchronisation, avec une indication explicite de son
+  ancienneté ;
+- détecter une **expiration réelle** de session, revenir proprement à la
+  connexion et distinguer cette situation de toutes les erreurs réseau.
+
+Aucune écriture sur le routeur, aucun bouton Bloquer/Débloquer, aucun backend,
+aucune persistance du mot de passe.
+
+### 18.2 Décisions d'architecture
+
+| Sujet | Décision |
+|---|---|
+| Stockage | Fichier JSON unique dans `noBackupFilesDir`, pas de Room ni de DataStore. |
+| Atomicité | Fichier temporaire + `fsync` + `ATOMIC_MOVE`. |
+| Contenu | Liste blanche de clés : appareils, hôte, compte, date. Jamais mot de passe, jeton, session ou challenge. |
+| Contexte | Hôte normalisé + compte. Un instantané d'un autre routeur/compte est supprimé, jamais affiché. |
+| Restauration | Uniquement après acceptation des identifiants. |
+| Expiration | `RouterAuthenticationException` pendant une lecture → `SessionExpired`. Une lecture ne porte aucun mot de passe. |
+| Cooldown | État `Cooldown` distinct, aucune navigation, aucun retry automatique, client conservé en mémoire. |
+| Navigation | `LaunchedEffect` unique keyé sur l'état, `popUpTo(graph.id) { inclusive = true }`, `launchSingleTop`, `restoreState = false`. |
+| Cache et UI | Bandeau « Dernières données connues — actualisées le … », badges neutres, compteur « Wi-Fi (lecture) ». |
+| `payloadAbsent` | Jamais écrit sur disque, ne remplace pas un bon instantané. |
+
+### 18.3 Fichiers principaux
+
+- `data/SnapshotStore.kt` — codec JSON, écriture atomique, bornes, rejet.
+- `data/RouterRepository.kt` — restauration, génération, états, écriture conditionnelle.
+- `data/ZltRouterAdapter.kt` — mapping expiration/timeout.
+- `data/RouterAdapter.kt` — `Timeout`, `SessionExpired`, `NotConnected`.
+- `navigation/SessionNavigation.kt` — règle pure `shouldReturnToLogin`.
+- `ui/components/CommonComponents.kt` — `CachedDataBanner`.
+- `ui/components/Presentation.kt` — libellés cache, date, messages d'erreur.
+- `ui/dashboard`, `ui/devices`, `ui/login` — amorçage du cache et états.
+- `WifiAdminApplication.kt` — injection du `SnapshotStore`.
+
+### 18.4 Tests
+
+| Suite | Tests | Échecs |
+|---|---|---|
+| `router-core` | **183** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **89** | 0 |
+| **Total** | **328** | **0** |
+
+Scénarios hors ligne : **10/10** conformes, aucune tentative d'écriture.
+
+Tests ajoutés : `SnapshotStoreTest` (14), `RouterRepositorySnapshotTest` (14),
+`SessionNavigationTest` (8), `PresentationTest` (9), `CacheDisplayTest` (6),
+et 3 tests d'expiration/timeout dans `LoginViewModelTest`.
+
+### 18.5 Limites et validation réelle
+
+- Aucune action n'a été effectuée sur le routeur réel.
+- La détection d'expiration repose sur le comportement documenté du firmware
+  (`NO_AUTH`, `LOGIN_TIMEOUT`) et sur le renouvellement unique déjà implémenté.
+- La procédure de validation sur téléphone est décrite dans
+  `docs/MISSION_08_PHONE_TEST.md`.
+- Le rapport consolidé (sécurité, non-régression, revue indépendante) est dans
+  `docs/MISSION_08_REPORT.md`.
+
+---
+
+## 19. Validation du scénario d'expiration (05/11/2026)
+
+### 19.1 Contexte
+
+Les cinq premiers scénarios de la Mission 08 ont été validés sur le téléphone
+réel. Restait le **scénario d'expiration de session**, non reproductible sur
+le routeur réel sans y agir.
+
+### 19.2 Décisions
+
+| Sujet | Décision |
+|---|---|
+| Simulation | `tools/fake_router_expiry.py` : 4 modes, dont `renew-refused` (l'expiration), `renew-ok` (pas une expiration), `renew-cooldown` (le gel garde son erreur). |
+| Piège évité | Faire échouer le `cmd 100` **sans** `login_fail` produirait un **cooldown**, pas une expiration. Le faux routeur utilise `login_fail: "fail"`, la forme réelle du firmware. |
+| Preuve protocole | `ZltRouterClientRenewalTest` : le renouvellement est tenté **exactement une fois** (2 `cmd 100`), la lecture n'est pas rejouée après un refus, aucun secret dans le message. |
+| Preuve Android | `SessionExpiryFlowTest` : arrêt des lectures, purge mémoire, retour à la connexion, message exact, blocage du Retour, conservation du fichier, 4 tests négatifs. |
+| Contrat du message | `EXPIRY_MESSAGE` centralisé ; `LoginMessageContractTest` verrouille le texte affiché (vérifié : le test échoue si la phrase est altérée). |
+
+### 19.3 Défauts trouvés par les sous-agents et corrigés
+
+| # | Défaut | Correction |
+|---|---|---|
+| F1 | Une navigation par onglet dispatchée à l'instant de l'expiration pouvait empiler un écran protégé. | Clé composite `(connection, route)` + règle `shouldLeaveProtectedScreen`, qui ne vise qu'une expiration confirmée. |
+| F2 | Les ViewModels conservaient les appareils pendant la fenêtre précédant le pop. | `DashboardViewModel` et `DevicesViewModel` observent l'état et purgent leurs données. |
+| F3 | Le message pouvait ne pas s'afficher si le `LoginViewModel` préexistait à l'expiration. | Observation de l'état du repository + lecture de la valeur courante. |
+
+### 19.4 Tests
+
+| Suite | Tests | Échecs |
+|---|---:|---:|
+| `router-core` | **193** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **126** | 0 |
+| **Total** | **375** | **0** |
+
+Scénarios hors ligne : pare-feu **10/10**, expiration **3/3**, aucune écriture.
+
+### 19.5 Livrables
+
+- `docs/MISSION_08_EXPIRY_VALIDATION.md` — procédure reproductible.
+- `docs/MISSION_08_EXPIRY_REPORT.md` — rapports des sous-agents et verdict.
+- `tools/fake_router_expiry.py`, `tools/fake_router_expiry_scenarios.py`.
+
+### 19.6 Verdict
+
+**Mission 08 validée.** Le bouton Retour et le rendu du message restent à
+constater visuellement sur le téléphone : ce sont des propriétés du framework
+Android, hors de portée d'un test JVM. La Mission 09 n'est pas commencée.
+
+---
+
+## 20. Mission 09 — rafraîchissement automatique et changements de réseau (05/11/2026)
+
+### 20.1 Objectif
+
+Rafraîchir les données toutes les **30 secondes** tant que l'écran
+concerné est visible, et détecter la perte du réseau local ou le passage à
+un autre réseau, **sans élargir le périmètre** et sans jamais écrire sur le
+routeur.
+
+### 20.2 Décisions
+
+| Sujet | Décision | Justification |
+|---|---|---|
+| Primitive de visibilité | `LifecycleStartEffect(Unit)` + `startPolling()` / `stopPolling()` idempotents | La Compose connaît le cycle de vie ; le ViewModel n'a pas à le connaître. Clé `Unit` : une recomposition ne relance rien. |
+| Boucle de 30 s | **Une seule**, dans `RefreshCoordinator` (instance unique de `AppContainer`) | Un ViewModel est recréé au changement d'onglet : son minuteur repartirait de zéro. |
+| Mutualisation | `ReadCoordinator` : **un seul `Deferred` en vol** | Le `Mutex` sérialise sans mutualiser. Le verrou du repository a été **sorti** du chemin de la lecture, sinon la mutualisation serait silencieusement cassée. |
+| Fraîcheur | `ReadFreshnessPolicy` (fonction pure) | Une lecture réussie de moins de 25 s est réutilisée. |
+| Back-off | 30 s → 60 s → 120 s → 300 s | Un routeur éteint n'est pas pilonné. |
+| Cooldown | Suspend le rafraîchissement pendant la pénalité annoncée | Interroger un routeur qui refuse les logins aggrave le refus. |
+| Horloges | `AppClock` : monotone pour les délais, civile pour les étiquettes | Un changement de date ne peut pas casser la période. |
+| Réseau | `NetworkMonitor` sur `TRANSPORT_WIFI`, sans `VALIDATED` | Un Wi-Fi local **sans Internet** reste utilisable. |
+| Identité réseau | `NetworkIdentity` (interface + plage + passerelle) dans le `SnapshotContext` | `admin` + `192.168.1.1` est le défaut de **tout** routeur domestique : sans cela, le cache d'un routeur serait affiché pour un autre. |
+| SSID / BSSID | **Jamais lus** | Ils exigent `ACCESS_FINE_LOCATION`, que l'application ne demande pas. |
+| Changement de réseau | `ConnectionState.NetworkChanged`, **distinct** de `SessionExpired` | Un changement de réseau n'est **pas** une expiration : la session est suspendue, les dernières données restent à l'écran, aucune navigation. |
+| Déconnexion | L'état est réinitialisé **avant** le nettoyage, sans attendre le verrou | Une lecture en vol bloquait l'interface jusqu'à 8 s (deux timeouts de 4 s). |
+
+### 20.3 Défauts trouvés par les sous-agents et corrigés
+
+| # | Défaut | Gravité | Correction |
+|---|---|---|---|
+| 1 | Le cache pouvait être restauré pour **un autre routeur** (même `192.168.1.1`, même `admin`) | 🔴 Critique | Identité réseau ajoutée au `SnapshotContext`. |
+| 2 | Un `OkHttpClient` (pool de connexions + de threads) était créé **par requête** | 🔴 Critique | Les clients sont partagés : 8 640/jour avec le rafraîchissement. |
+| 3 | `disconnect()` attendait la lecture en vol : interface figée jusqu'à 8 s | 🟠 Moyen | L'état est réinitialisé avant le nettoyage, sans prendre le verrou. |
+| 4 | Le rafraîchissement pouvait doubler le trafic (une boucle par écran) | 🟠 Moyen | Un coordinateur unique + lecture dédupliquée. |
+| 5 | Un cooldown pouvait être martelé par le rafraîchissement | 🟠 Moyen | La pénalité suspend la boucle. |
+| 6 | Les lectures passaient pendant l'état `NetworkChanged` | 🟡 Mineur | Elles sont suspendues. |
+| 7 | Le callback réseau dupliqué entre le resolver et le moniteur | 🟡 Mineur | Le resolver consomme le moniteur. |
+
+### 20.4 Tests
+
+| Suite | Tests | Échecs |
+|---|---:|---:|
+| `router-core` | **193** | 0 |
+| `poc-cli` | **56** | 0 |
+| `app` | **189** | 0 |
+| **Total** | **438** | **0** |
+
+Scénarios hors ligne : pare-feu **10/10**, expiration **3/3**, aucune écriture.
+
+Tests ajoutés : `RefreshCoordinatorTest` (11), `ReadCoordinatorTest` (8),
+`NetworkChangeTest` (13), `PollingInvariantsTest` (15),
+`Mission09BoundaryTest` (10).
+
+### 20.5 Livrables
+
+- `docs/MISSION_09_VALIDATION.md` — procédure de test sur téléphone.
+- `docs/MISSION_09_REPORT.md` — rapports des sous-agents et verdict.
+- `docs/ANDROID_ARCHITECTURE.md` §10 — architecture.
+
+### 20.6 Verdict
+
+**Mission 09 livrée.** Les contrôles visuels de la Mission 08 (message
+d'expiration, bouton Retour) restent à confirmer sur le téléphone : ce sont
+des propriétés du framework Android, hors de portée d'un test JVM.

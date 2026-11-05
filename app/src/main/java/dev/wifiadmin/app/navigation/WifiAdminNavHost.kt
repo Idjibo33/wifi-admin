@@ -11,10 +11,12 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -23,6 +25,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.wifiadmin.app.AppContainer
+import dev.wifiadmin.app.data.ConnectionState
 import dev.wifiadmin.app.ui.dashboard.DashboardScreen
 import dev.wifiadmin.app.ui.dashboard.DashboardViewModel
 import dev.wifiadmin.app.ui.devices.DevicesScreen
@@ -67,6 +70,37 @@ fun WifiAdminNavHost(
     val viewModelFactory = remember(container) { WifiAdminViewModelFactory(container) }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
+
+    val routerState by container.routerRepository.state.collectAsStateWithLifecycle()
+    val currentRoute = currentDestination?.route
+
+    // A confirmed expiry is the only event that sends the user back to the
+    // login screen. The whole back stack is cleared so Back cannot reopen a
+    // protected screen.
+    //
+    // The effect is keyed on the connection **and** on the current route: a
+    // tab navigation dispatched at the very instant of the expiry would
+    // otherwise leave the user on an authenticated screen, because the
+    // connection state alone would not have changed again.
+    LaunchedEffect(routerState.connection, currentRoute) {
+        val onLogin = currentRoute == Route.Login.path
+        val mustGoBack = shouldReturnToLogin(
+            connection = routerState.connection,
+            currentRoute = currentRoute,
+        )
+        val onProtectedWithoutSession = shouldLeaveProtectedScreen(
+            connection = routerState.connection,
+            currentRoute = currentRoute,
+        )
+
+        if (!onLogin && (mustGoBack || onProtectedWithoutSession)) {
+            navController.navigate(Route.Login.path) {
+                popUpTo(navController.graph.id) { inclusive = true }
+                launchSingleTop = true
+                restoreState = false
+            }
+        }
+    }
 
     val showBottomBar = Tab.entries.any { tab ->
         currentDestination?.hierarchy?.any { it.route == tab.route.path } == true

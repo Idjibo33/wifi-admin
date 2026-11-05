@@ -15,11 +15,18 @@ data class WifiMacEntry(
  *
  * This is the only thing that has to be saved and restored: it fully
  * describes the filter for [band].
+ *
+ * @property mode the filter mode. It is **null** when the router delivered
+ *   no payload: an absent collection is not an empty collection, and
+ *   reporting "disabled" would claim something the router never said.
+ * @property payloadPresent whether the router actually delivered the
+ *   filter's payload.
  */
 data class WifiMacFilterState(
     val band: WifiBandFilter,
-    val mode: WifiMacMode,
+    val mode: WifiMacMode?,
     val entries: List<WifiMacEntry> = emptyList(),
+    val payloadPresent: Boolean = true,
 ) {
     /**
      * True when this state would lock every wireless device out of the band.

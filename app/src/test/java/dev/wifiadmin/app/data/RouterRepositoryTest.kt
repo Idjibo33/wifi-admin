@@ -125,11 +125,13 @@ class RouterRepositoryTest {
         }
         val repository = RouterRepository(adapter)
         repository.connect("192.168.1.1", "admin", "secret")
-        repository.refresh()
+        // The reads are forced: the test asserts that the router is really
+        // reached, and that a failure keeps the previous snapshot.
+        repository.refreshForced()
         val snapshot = repository.state.value.snapshot
 
         failNext = true
-        repository.refresh()
+        repository.refreshForced()
 
         assertEquals(snapshot, repository.state.value.snapshot)
         assertTrue(repository.state.value.error is RouterUnavailableException.Unreachable)

@@ -22,10 +22,31 @@ class RouterNetworkException(
  * The router answered, but not with something this module can use:
  * malformed JSON, a failed `success` flag or an HTTP error.
  */
-class RouterProtocolException(
+open class RouterProtocolException(
     message: String,
     cause: Throwable? = null,
 ) : RouterException(message, cause)
+
+/**
+ * The firmware refuses a command for this account: it answers
+ * `{"success": false, "message": "LIMITED_ACCESS"}`.
+ *
+ * This is not a wrong password and not a network problem: the command exists
+ * but is disabled on this firmware. Retrying cannot help.
+ *
+ * It extends [RouterProtocolException] so that existing callers keep their
+ * catch blocks, while a diagnostic can still tell the two apart.
+ */
+class RouterFeatureUnavailableException(
+    val feature: String,
+    /**
+     * Why the command is refused, as a **sanitised** description.
+     *
+     * It never contains the router's raw message: it is built from an
+     * enumeration token or from a fixed sentence.
+     */
+    val routerMessage: String,
+) : RouterProtocolException("The router refuses the $feature feature: $routerMessage")
 
 /**
  * The router refused the credentials, or the session expired and could not be

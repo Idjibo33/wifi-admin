@@ -5,6 +5,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -42,6 +44,26 @@ class WifiMacFilterClientTest {
     }
 
     // ---- Fixtures ----------------------------------------------------
+
+    /**
+     * The router's own web UI always sends `language`
+     * (`main.js`: `if (!json.language) json.language = Page.language`).
+     *
+     * The Wi-Fi client builds its own payloads, so it must carry the field
+     * too — otherwise it stays out of protocol with the router's own client.
+     */
+    @Test
+    fun `every request carries the language the router expects`() {
+        client.read(dev.wifiadmin.router.wifi.WifiBandFilter.BAND_2_4_GHZ)
+
+        assertTrue("at least one request must have been sent", router.requests.isNotEmpty())
+        router.requests.forEach { request ->
+            assertTrue(
+                "cmd ${request.cmd} must carry a language",
+                request.json.has("language"),
+            )
+        }
+    }
 
     private fun stubAuth() {
         router.onJson(232) { JSONObject().put("success", true).put("token", "CHALLENGE") }
@@ -134,12 +156,15 @@ class WifiMacFilterClientTest {
     }
 
     @Test
-    fun `a missing datas key yields the close mode and an empty list`() {
+    fun `a missing datas key yields an unknown state, not the close mode`() {
         router.onSubcmd(278, "GET", "1") { JSONObject().put("success", true) }
 
         val state = client.read(WifiBandFilter.BAND_2_4_GHZ)
 
-        assertEquals(WifiMacMode.CLOSE, state.mode)
+        // The router delivered no payload: claiming "close" would assert
+        // something it never said.
+        assertNull(state.mode)
+        assertFalse(state.payloadPresent)
         assertTrue(state.entries.isEmpty())
     }
 
@@ -165,7 +190,8 @@ class WifiMacFilterClientTest {
             client.read(WifiBandFilter.BAND_2_4_GHZ)
             fail("expected a compatibility exception")
         } catch (expected: WifiMacCompatibilityException.UnknownMode) {
-            assertEquals("unknown-mode", expected.value)
+            // The raw mode is deliberately not kept: it is free text.
+            assertTrue(expected.message.orEmpty().contains("Unknown MAC filter mode"))
         }
     }
 
@@ -535,5 +561,69 @@ class WifiMacFilterClientTest {
         } catch (expected: WifiMacValidationException.DuplicateMac) {
             // expected
         }
+    }
+
+    /**
+     * The router's `message` is free text: it may hold anything.
+     *
+     * It must never reach an exception message, because the CLI prints
+     * exception messages to the user.
+     */
+    @Test
+    fun `the raw router message never reaches an exception`() {
+        router.onSubcmd(278, "GET", "1") {
+            JSONObject()
+                .put("success", false)
+                .put("message", "user=admin password=hunter2")
+        }
+
+        try {
+            client.read(WifiBandFilter.BAND_2_4_GHZ)
+            fail("expected a compatibility exception")
+        } catch (expected: WifiMacCompatibilityException.CommandRefused) {
+            val text = expected.message.orEmpty()
+            assertFalse("the raw message must not leak", text.contains("hunter2"))
+            assertFalse(text.contains("user=admin"))
+        }
+    }
+
+    /**
+     * The same rule applies to every raw value the router sends.
+     *
+     * `macfilter` and `wifiStatus` are free text too, and they used to be
+     * copied verbatim into exception messages.
+     */
+    @Test
+    fun `no raw router value ever reaches an exception`() {
+        router.onSubcmd(278, "GET", "1") {
+            JSONObject().put("success", true).put(
+                "datas",
+                JSONObject().put("macfilter", "close\nsecret_admin_password")
+            )
+        }
+
+        try {
+            client.read(WifiBandFilter.BAND_2_4_GHZ)
+            fail("expected a compatibility exception")
+        } catch (expected: WifiMacCompatibilityException.UnknownMode) {
+            val text = expected.message.orEmpty()
+            assertFalse("the raw value must not leak", text.contains("secret_admin_password"))
+            assertFalse("no line break may survive", text.contains("\n"))
+        }
+    }
+
+    @Test
+    fun `the wifi status value never reaches an exception`() {
+        router.onJson(417) {
+            JSONObject().put("success", true).put("wifiStatus", "0\nsecret_wifi_password")
+        }
+
+        val result = client.checkWritable(WifiBandFilter.BAND_2_4_GHZ)
+
+        val error = result.exceptionOrNull()
+        assertTrue("the write must be refused", error is WifiMacCompatibilityException)
+        val text = error?.message.orEmpty()
+        assertFalse("the raw value must not leak", text.contains("secret_wifi_password"))
+        assertFalse("no line break may survive", text.contains("\n"))
     }
 }

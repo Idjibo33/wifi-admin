@@ -38,8 +38,25 @@ internal object RouterPayloadParser {
     const val CMD_WIFI_2_4 = 224
     const val CMD_WIFI_5 = 225
 
+    private const val KEY_DHCP_LIST = "dhcp_list_info"
     private const val WIFI_KEY_2_4 = "wlan24g_wifi_info"
     private const val WIFI_KEY_5 = "wlan5g_wifi_info"
+
+    /**
+     * Whether a reply carries the device list at all.
+     *
+     * The three list commands each carry their own key. When none of them
+     * is present, the router delivered no data: the snapshot must say so
+     * instead of showing an empty network.
+     */
+    fun payloadAbsent(
+        dhcpReply: JSONObject,
+        wifi24Reply: JSONObject,
+        wifi5Reply: JSONObject,
+    ): Boolean =
+        !dhcpReply.has(KEY_DHCP_LIST) &&
+            !wifi24Reply.has(WIFI_KEY_2_4) &&
+            !wifi5Reply.has(WIFI_KEY_5)
 
     fun parseDhcpLeases(reply: JSONObject): List<DhcpLease> {
         val array = reply.optJSONArray("dhcp_list_info") ?: return emptyList()

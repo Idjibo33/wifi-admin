@@ -63,10 +63,60 @@ class WifiFilterRendererTest {
             WifiBandFilter.BAND_5_GHZ,
             null,
             emptyList(),
-            "the router could not be reached"
+            WifiFilterError.NETWORK
         )
 
         assertTrue(output.contains("ERREUR"))
         assertTrue(output.contains("5 GHz"))
+    }
+
+    // ---- Mission 06 : intégrité et confidentialité du rapport ----
+
+    /**
+     * The Wi-Fi report is printed next to the firewall one, so it must offer
+     * the same guarantee: no raw router message.
+     */
+    @Test
+    fun `the report never prints a raw router message`() {
+        val output = WifiFilterRenderer.render(
+            WifiBandFilter.BAND_2_4_GHZ,
+            null,
+            emptyList(),
+            WifiFilterError.REFUSED,
+        )
+
+        assertFalse("the raw message must not be printed", output.contains("hunter2"))
+        assertFalse(output.contains("user=admin"))
+        assertTrue(output.contains("ERREUR"))
+    }
+
+    @Test
+    fun `the report never prints a key that looks like a secret`() {
+        val output = WifiFilterRenderer.render(
+            WifiBandFilter.BAND_2_4_GHZ,
+            state,
+            listOf("cmd", "sessionId", "passwd"),
+            null,
+        )
+
+        assertFalse(output.contains("sessionId"))
+        assertFalse(output.contains("passwd"))
+        assertTrue(output.contains("cmd"))
+    }
+
+    /**
+     * A key name is chosen by the router. A name containing a line break
+     * could otherwise forge a line of the report.
+     */
+    @Test
+    fun `the report cannot be forged with a key containing a line break`() {
+        val output = WifiFilterRenderer.render(
+            WifiBandFilter.BAND_2_4_GHZ,
+            state,
+            listOf("mac\nrègles lues              99"),
+            null,
+        )
+
+        assertFalse("no forged line may appear", output.contains("règles lues"))
     }
 }

@@ -129,4 +129,46 @@ object Fixtures {
         if (rxrate != null) put("rxrate", rxrate)
         if (ssid != null) put("ssid", ssid)
     }
+
+    // ---- Firewall MAC filter (cmd 23 / 30) ----
+
+    fun firewallRulesReply(rules: List<JSONObject>): JSONObject =
+        JSONObject().put("success", true).put("cmd", 23).put("datas", JSONArray(rules))
+
+    fun firewallRule(
+        mac: String,
+        ippro: String = "IPV4",
+        enableLink: Boolean = false,
+        enableRule: Boolean = true,
+        remark: String = "",
+    ): JSONObject = JSONObject().apply {
+        put("enableRule", enableRule)
+        put("enableLink", enableLink)
+        put("ippro", ippro)
+        put("mac", mac)
+        put("remark", remark)
+    }
+
+    fun firewallDefaultsReply(
+        ipv4AcceptAll: Any = "true",
+        ipv6AcceptAll: Any = "true",
+    ): JSONObject = JSONObject().apply {
+        put("success", true)
+        put("cmd", 30)
+        put(
+            "datas",
+            JSONArray(
+                listOf(
+                    JSONObject()
+                        .put("enableRule", true)
+                        .put("acceptAll", ipv4AcceptAll)
+                        .put("ippro", "IPV4"),
+                    JSONObject()
+                        .put("enableRule", true)
+                        .put("acceptAll", ipv6AcceptAll)
+                        .put("ippro", "IPV6"),
+                )
+            )
+        )
+    }
 }

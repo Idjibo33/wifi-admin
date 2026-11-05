@@ -2,6 +2,7 @@ package dev.wifiadmin.app.ui.login
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.wifiadmin.app.data.ConnectionState
 import dev.wifiadmin.app.data.RouterAddressResolver
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.RouterUnavailableException
@@ -16,7 +17,16 @@ sealed class LoginResult {
     data object Success : LoginResult()
     data object InvalidCredentials : LoginResult()
     data object NetworkError : LoginResult()
+    data object Timeout : LoginResult()
     data object UnexpectedResponse : LoginResult()
+
+    /**
+     * The previous session could not be renewed.
+     *
+     * The message on screen is fixed: "Votre session a expiré. Reconnectez-vous
+     * pour continuer." This is not a wrong password.
+     */
+    data object SessionExpired : LoginResult()
 
     /** The router refuses logins for a while after too many failures. */
     data class Cooldown(val retryAfterSeconds: Int?) : LoginResult()
@@ -65,6 +75,38 @@ class LoginViewModel(
 
     init {
         observeRouterAddress()
+        reportExpiryIfAny()
+        observeSessionExpiry()
+    }
+
+    /**
+     * Reports a confirmed expiry to the login screen.
+     *
+     * The repository is the single source of truth, shared with the
+     * navigation. It is **observed** rather than read once: the login view
+     * model may be created before the expiry is detected, and the message
+     * must still appear.
+     */
+    private fun observeSessionExpiry() {
+        viewModelScope.launch {
+            repository.state.collect { state ->
+                if (state.connection is ConnectionState.SessionExpired) {
+                    _result.value = LoginResult.SessionExpired
+                }
+            }
+        }
+    }
+
+    /**
+     * Sets the expiry result at once, before any coroutine runs.
+     *
+     * The screen must show the message on its very first frame: waiting for
+     * the collector would show an empty screen for a moment.
+     */
+    private fun reportExpiryIfAny() {
+        if (repository.state.value.connection is ConnectionState.SessionExpired) {
+            _result.value = LoginResult.SessionExpired
+        }
     }
 
     /**
@@ -112,8 +154,11 @@ class LoginViewModel(
             _result.value = when {
                 accepted -> LoginResult.Success
                 error is RouterUnavailableException.Unreachable -> LoginResult.NetworkError
+                error is RouterUnavailableException.Timeout -> LoginResult.Timeout
                 error is RouterUnavailableException.UnexpectedResponse ->
                     LoginResult.UnexpectedResponse
+                error is RouterUnavailableException.SessionExpired ->
+                    LoginResult.SessionExpired
                 error is RouterUnavailableException.Cooldown ->
                     LoginResult.Cooldown(error.retryAfterSeconds)
                 else -> LoginResult.InvalidCredentials
