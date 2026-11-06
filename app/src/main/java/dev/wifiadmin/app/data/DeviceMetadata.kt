@@ -94,6 +94,21 @@ object CustomName {
         for (code in 0x200E..0x200F) add(code.toChar())
         for (code in 0x202A..0x202E) add(code.toChar())
         for (code in 0x2066..0x2069) add(code.toChar())
+        // The rest of the Unicode categories that carry no visible text.
+        // The bidi ones are already listed above; these are the remaining
+        // formatting characters (the Arabic letter mark, the zero-width
+        // spaces, the byte order mark) and the line separators, which would
+        // break the layout of a single-line text.
+        for (code in 0x206A..0x206F) add(code.toChar())
+        add(0x061C.toChar())
+        add(0x200B.toChar())
+        add(0x200C.toChar())
+        add(0x200D.toChar())
+        add(0xFEFF.toChar())
+        add(0x2028.toChar())
+        add(0x2029.toChar())
+        add(0x202F.toChar())
+        add(0x2060.toChar())
     }
 
     /**

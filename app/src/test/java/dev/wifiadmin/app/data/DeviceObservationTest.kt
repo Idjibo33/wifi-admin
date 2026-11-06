@@ -2,7 +2,9 @@ package dev.wifiadmin.app.data
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -238,6 +240,51 @@ class DeviceObservationTest {
 
         assertEquals(
             "a reply without a device list is NOT an observation",
+            afterFirst,
+            repository.deviceMetadata()["aa:bb:cc:dd:ee:01"]?.lastSeenMillis
+        )
+    }
+
+    @Test
+    fun `an empty device list confirms that no device is there`() = runTest(dispatcher) {
+        val directory = Files.createTempDirectory("empty-list").toFile()
+        val store = DeviceMetadataStore(directory) { 1_700_000_060_000L }
+        var empty = false
+        val adapter = FakeRouterAdapter {
+            if (empty) {
+                FakeRouterAdapter.oneDevice(1_700_000_000_000L).copy(devices = emptyList())
+            } else {
+                FakeRouterAdapter.oneDevice(1_700_000_000_000L)
+            }
+        }
+        val repository = RouterRepository(
+            adapter = adapter,
+            ioDispatcher = dispatcher,
+            snapshotStore = null,
+            metadataStore = store,
+            clock = TestHarness.virtualClock(testScheduler),
+            scope = this,
+            freshness = ReadFreshnessPolicy { false },
+        )
+
+        repository.connect("192.168.1.1", "admin", "secret")
+        repository.refresh()
+        runCurrent()
+
+        val afterFirst = repository.deviceMetadata()["aa:bb:cc:dd:ee:01"]?.lastSeenMillis
+        assertNotNull(afterFirst)
+
+        // The router answers with an **empty** list. That is not the same as
+        // answering without a list: the router said it knows no device.
+        // The device that was there keeps its last observation, because it
+        // was not seen in this read.
+        empty = true
+        advanceTimeBy(2_000)
+        repository.refresh()
+        runCurrent()
+
+        assertEquals(
+            "a device that is absent keeps its last observation",
             afterFirst,
             repository.deviceMetadata()["aa:bb:cc:dd:ee:01"]?.lastSeenMillis
         )

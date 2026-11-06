@@ -123,9 +123,18 @@ data class MetadataContext(
      * It is a plain FNV-1a: it does not need to resist an attacker, only
      * to separate the contexts. A cryptographic hash would add a dependency
      * for no benefit here.
+     *
+     * The three parts are **length-prefixed** before being hashed. A plain
+     * join by a separator would be ambiguous — `("a|b", "c")` and
+     * `("a", "b|c")` would produce the same string, and therefore the same
+     * file for two different routers.
      */
     fun stableHash(): String {
-        val source = listOf(host, account, networkId).joinToString("|")
+        val source = buildString {
+            listOf(host, account, networkId).forEach { part ->
+                append(part.length).append(':').append(part).append('|')
+            }
+        }
         var hash = -0x340d631b7bdddcdbL // FNV-1a 64-bit offset basis
         for (byte in source.toByteArray(Charsets.UTF_8)) {
             hash = hash xor (byte.toLong() and 0xFF)
@@ -235,11 +244,20 @@ class DeviceMetadataStore(
             )
         }
 
-        if (!changed && added.isEmpty()) return@withLock MetadataWrite.Skipped(
-            MetadataWrite.Reason.NO_CHANGE
-        )
+        // The entries that were not observed for a long time are removed
+        // **here**, at the moment the file is written: the purge then costs
+        // no extra read and no extra write, and it is triggered by the
+        // application — never by the system.
+        val retained = purgeExpiredEntries(updated + added, clock())
 
-        val all = (updated + added).take(MAX_ENTRIES)
+        // Nothing changed and nothing expired: there is nothing to write.
+        // The comparison is on the retained list, so an expiry is still
+        // persisted even when the snapshot itself brought nothing new.
+        if (!changed && added.isEmpty() && retained.size == existing.size) {
+            return@withLock MetadataWrite.Skipped(MetadataWrite.Reason.NO_CHANGE)
+        }
+
+        val all = retained.take(MAX_ENTRIES)
         writeLocked(file, context, all)
     }
 
@@ -306,19 +324,42 @@ class DeviceMetadataStore(
      * @return the number of entries that were removed.
      */
     fun purgeExpired(context: MetadataContext, now: Long): Int = lock.withLock {
+        purgeExpiredLocked(context, now)
+    }
+
+    /**
+     * The entries that are kept after the retention.
+     *
+     * An entry that carries a custom name is **always** kept: it is the
+     * user's work, and losing it silently would be a loss of data. An
+     * entry that only carries an old observation is removed once the
+     * retention has passed. An entry with neither a name nor an
+     * observation is removed at once: it holds nothing.
+     */
+    private fun purgeExpiredEntries(
+        entries: List<DeviceMetadata>,
+        now: Long,
+    ): List<DeviceMetadata> = entries.filter { entry ->
+        entry.hasCustomName || (
+            entry.lastSeenMillis != null &&
+                now - entry.lastSeenMillis <= RETENTION_MILLIS
+            )
+    }
+
+    /**
+     * The purge, with the lock already taken.
+     */
+    private fun purgeExpiredLocked(context: MetadataContext, now: Long): Int {
         val file = fileFor(context)
         val existing = readEntriesLocked(file, context)
-        if (existing.isEmpty()) return@withLock 0
+        if (existing.isEmpty()) return 0
 
-        val kept = existing.filter { entry ->
-            entry.hasCustomName || entry.lastSeenMillis == null ||
-                now - entry.lastSeenMillis <= RETENTION_MILLIS
-        }
+        val kept = purgeExpiredEntries(existing, now)
         val removed = existing.size - kept.size
-        if (removed == 0) return@withLock 0
+        if (removed == 0) return 0
 
         writeLocked(file, context, kept)
-        removed
+        return removed
     }
 
     // -----------------------------------------------------------------

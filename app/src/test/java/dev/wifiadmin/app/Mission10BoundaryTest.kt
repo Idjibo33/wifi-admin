@@ -72,42 +72,39 @@ class Mission10BoundaryTest {
             "app/src/main/java/dev/wifiadmin/app/data/RouterRepository.kt"
         )
 
-        val forbidden = listOf(
-            "adapter.rename",
-            "adapter.setName",
-            "adapter.updateDevice",
-            "adapter.writeDevice",
+        // Every call of the adapter that is not one of the three read
+        // operations would be a write. The check is on the **shape** of
+        // the call, not on a list of names: a method that nobody thought
+        // of would be caught too.
+        val calls = Regex("""adapter\s*\.\s*(\w+)\s*\(""")
+            .findAll(repository)
+            .map { it.groupValues[1] }
+            .toSet()
+
+        val allowed = setOf("connect", "fetchDevices", "disconnect")
+        val extra = calls - allowed
+
+        assertTrue(
+            "the repository must only read through the adapter, found: $extra",
+            extra.isEmpty()
         )
-        forbidden.forEach { call ->
-            assertFalse(
-                "the repository must never call $call",
-                repository.contains(call)
-            )
-        }
     }
 
     @Test
     fun `the custom names are never logged`() {
-        // A custom name is personal data. It must never reach a log.
+        // A custom name is personal data. It must never reach a log — in
+        // **any** file of the application, not only in the files of the
+        // feature.
         val offenders = appSources().filter { file ->
             val text = file.readText()
-            // The logs of the application itself: none is allowed in the
-            // files of the feature.
-            val isFeatureFile = file.name.contains("DeviceMetadata") ||
-                file.name.contains("DeviceIdentity") ||
-                file.name.contains("DevicePresentation") ||
-                file.name.contains("DevicesViewModel") ||
-                file.name.contains("DevicesScreen")
-            isFeatureFile && (
-                Regex("""\bLog\.""").containsMatchIn(text) ||
-                    Regex("""\bprintln\(""").containsMatchIn(text) ||
-                    Regex("""\bSystem\.out\b""").containsMatchIn(text) ||
-                    Regex("""\bTimber\.""").containsMatchIn(text)
-                )
+            Regex("""\bLog\.""").containsMatchIn(text) ||
+                Regex("""\bprintln\(""").containsMatchIn(text) ||
+                Regex("""\bSystem\.out\b""").containsMatchIn(text) ||
+                Regex("""\bTimber\.""").containsMatchIn(text)
         }
 
         assertTrue(
-            "the custom names must never be logged, found in: $offenders",
+            "the application must never write a log, found in: $offenders",
             offenders.isEmpty()
         )
     }
@@ -122,13 +119,26 @@ class Mission10BoundaryTest {
             "app/src/main/java/dev/wifiadmin/app/WifiAdminApplication.kt"
         )
 
+        // The store is built from a directory that is **inside**
+        // `noBackupFilesDir`, not from a sibling of it: a store built
+        // elsewhere would be restored on another phone.
+        val storeDeclaration = Regex(
+            """val\s+deviceMetadataStore[^=]*=\s*DeviceMetadataStore\(([^)]*)\)""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(application)
+
         assertTrue(
-            "the metadata must live in the no-backup directory",
-            application.contains("noBackupFilesDir")
+            "the metadata store must be built in the container",
+            storeDeclaration != null
         )
         assertTrue(
-            "the metadata must have their own store",
-            application.contains("DeviceMetadataStore")
+            "the metadata store must live in the no-backup directory, found: " +
+                storeDeclaration!!.groupValues[1],
+            storeDeclaration.groupValues[1].contains("noBackupFilesDir")
+        )
+        assertTrue(
+            "the metadata store must have its own directory",
+            storeDeclaration.groupValues[1].contains("device-metadata")
         )
     }
 
