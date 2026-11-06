@@ -127,7 +127,8 @@ class DevicesViewModelTest {
             mac = "aa:bb:cc:dd:ee:01",
             ip = "192.168.1.10",
             name = "Poste",
-            presence = DevicePresence.ACTIVE
+            presence = DevicePresence.ACTIVE,
+            bands = setOf(WifiBand.BAND_2_4_GHZ)
         ),
         device(
             mac = "aa:bb:cc:dd:ee:02",
@@ -193,36 +194,72 @@ class DevicesViewModelTest {
     }
 
     @Test
-    fun `the wifi filter keeps only the associated devices`() = runTest(dispatcher) {
+    fun `the 2 GHz band filter keeps only the devices on that band`() = runTest(dispatcher) {
         val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
-        vm.setFilter(DeviceFilter.WIFI)
-        runCurrent()
-        coordinator.stopPolling()
-
-        val result = vm.state.value.filteredDevices
-        assertEquals(2, result.size)
-        assertTrue(result.all { it.presence == DevicePresence.ACTIVE })
-    }
-
-    @Test
-    fun `the wired filter keeps only the cabled devices`() = runTest(dispatcher) {
-        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
-
-        vm.setFilter(DeviceFilter.WIRED)
+        vm.setFilter(DeviceBandFilter.BAND_2_4)
         runCurrent()
         coordinator.stopPolling()
 
         val result = vm.state.value.filteredDevices
         assertEquals(1, result.size)
-        assertEquals(DevicePresence.CABLED, result.first().presence)
+        assertEquals("aa:bb:cc:dd:ee:01", result.first().mac)
+    }
+
+    @Test
+    fun `the 5 GHz filter keeps only the devices on that band`() = runTest(dispatcher) {
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
+
+        vm.setFilter(DeviceBandFilter.BAND_5)
+        runCurrent()
+        coordinator.stopPolling()
+
+        val result = vm.state.value.filteredDevices
+        assertEquals(1, result.size)
+        assertEquals("aa:bb:cc:dd:ee:02", result.first().mac)
+    }
+
+    @Test
+    fun `the wired filter keeps only the devices on no radio`() = runTest(dispatcher) {
+        val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
+
+        vm.setFilter(DeviceBandFilter.WIRED)
+        runCurrent()
+        coordinator.stopPolling()
+
+        val result = vm.state.value.filteredDevices
+        assertEquals(1, result.size)
+        assertEquals("aa:bb:cc:dd:ee:03", result.first().mac)
+    }
+
+    @Test
+    fun `a device associated with both bands appears in both filters`() = runTest(dispatcher) {
+        val dualBand = device(
+            mac = "aa:bb:cc:dd:ee:04",
+            ip = "192.168.1.13",
+            name = "Double",
+            presence = DevicePresence.ACTIVE,
+            bands = setOf(WifiBand.BAND_2_4_GHZ, WifiBand.BAND_5_GHZ)
+        )
+        val (vm, coordinator) =
+            viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices + dualBand)), this)
+
+        vm.setFilter(DeviceBandFilter.BAND_2_4)
+        runCurrent()
+        assertTrue(vm.state.value.filteredDevices.any { it.mac == "aa:bb:cc:dd:ee:04" })
+
+        vm.setFilter(DeviceBandFilter.BAND_5)
+        runCurrent()
+        assertTrue(vm.state.value.filteredDevices.any { it.mac == "aa:bb:cc:dd:ee:04" })
+
+        coordinator.stopPolling()
     }
 
     @Test
     fun `the all filter keeps every device`() = runTest(dispatcher) {
         val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
-        vm.setFilter(DeviceFilter.ALL)
+        vm.setFilter(DeviceBandFilter.ALL)
         runCurrent()
         coordinator.stopPolling()
 
@@ -233,17 +270,17 @@ class DevicesViewModelTest {
     fun `the query and the filter combine`() = runTest(dispatcher) {
         val (vm, coordinator) = viewModelAndCoordinator(FakeAdapter(DeviceSnapshot(sampleDevices)), this)
 
-        // The only match is an associated device, so the wired filter empties
-        // the result.
+        // The only match is a 5 GHz device, so the wired filter empties the
+        // result.
         vm.setQuery("Téléphone")
-        vm.setFilter(DeviceFilter.WIRED)
+        vm.setFilter(DeviceBandFilter.WIRED)
         runCurrent()
         coordinator.stopPolling()
 
         assertTrue(vm.state.value.filteredDevices.isEmpty())
 
         // And the matching filter keeps it.
-        vm.setFilter(DeviceFilter.WIFI)
+        vm.setFilter(DeviceBandFilter.BAND_5)
         runCurrent()
         coordinator.stopPolling()
 

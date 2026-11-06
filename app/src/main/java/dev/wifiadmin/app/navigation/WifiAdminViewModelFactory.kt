@@ -37,6 +37,7 @@ class WifiAdminViewModelFactory(
             DevicesViewModel(
                 container.routerRepository,
                 container.refreshCoordinator,
+                container.deviceListPreferences,
             ) as T
 
         modelClass.isAssignableFrom(SettingsViewModel::class.java) ->
