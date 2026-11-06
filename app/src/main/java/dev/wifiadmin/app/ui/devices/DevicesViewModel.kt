@@ -3,43 +3,25 @@ package dev.wifiadmin.app.ui.devices
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.wifiadmin.app.data.ConnectionState
+import dev.wifiadmin.app.data.DeviceIdentity
+import dev.wifiadmin.app.data.DeviceListPreferencesStore
+import dev.wifiadmin.app.data.DeviceMetadata
 import dev.wifiadmin.app.data.RefreshCoordinator
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.RouterUnavailableException
 import dev.wifiadmin.app.ui.components.StaleDataReason
 import dev.wifiadmin.app.ui.components.userMessage
-import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.RouterDevice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** The family of devices the user wants to see. */
-enum class DeviceFilter {
-    /** Every device the router knows about. */
-    ALL,
-
-    /** The devices associated with a Wi-Fi radio. */
-    WIFI,
-
-    /** The devices holding a DHCP lease on a wired interface. */
-    WIRED
-}
-
-/** The label shown on the filter chip. */
-val DeviceFilter.label: String
-    get() = when (this) {
-        DeviceFilter.ALL -> "Tous"
-        DeviceFilter.WIFI -> "Wi-Fi"
-        DeviceFilter.WIRED -> "Filaire"
-    }
-
 /**
  * The state of the device list.
  *
- * [devices] is the raw list from the last poll; [filteredDevices] is what the
- * screen actually shows.
+ * [devices] is the raw list from the last poll; [rows] is what the screen
+ * shows: the router's devices, joined with the local metadata.
  */
 data class DevicesUiState(
     /** True while the very first snapshot is being loaded. */
@@ -48,8 +30,10 @@ data class DevicesUiState(
     val devices: List<RouterDevice> = emptyList(),
     /** The text typed in the search field. */
     val query: String = "",
-    /** The family of devices to keep. */
-    val filter: DeviceFilter = DeviceFilter.ALL,
+    /** The band filter to keep. */
+    val filter: DeviceBandFilter = DeviceBandFilter.ALL,
+    /** The order the list is shown in. */
+    val sort: DeviceSort = DeviceSort.NAME,
     /** When the last successful poll happened, in epoch milliseconds. */
     val lastRefreshMillis: Long? = null,
     /** The message of the last failure, or null. */
@@ -76,6 +60,12 @@ data class DevicesUiState(
      * The reads are suspended and the last known devices stay on screen.
      */
     val isNetworkChanged: Boolean = false,
+    /**
+     * The local metadata of the devices, indexed by their identity.
+     *
+     * They are **local**: the router knows nothing about them.
+     */
+    val metadata: Map<String, DeviceMetadata> = emptyMap(),
 ) {
 
     /** True when the screen has nothing to show but a spinner. */
@@ -105,35 +95,88 @@ data class DevicesUiState(
         }
 
     /**
-     * The devices matching both the search query and the filter.
-     *
-     * The query is matched case-insensitively against the name, the IP address
-     * and the MAC address. The filter keeps the devices that are associated
-     * with a radio ([DeviceFilter.WIFI]) or that hold a lease on a wired
-     * interface ([DeviceFilter.WIRED]).
+     * The devices joined with their local metadata.
      */
-    val filteredDevices: List<RouterDevice>
+    val rows: List<DeviceRow>
+        get() = devices.map { device ->
+            val key = DeviceIdentity.keyOf(device)
+            DeviceRow(device = device, metadata = key?.let { metadata[it] })
+        }
+
+    /**
+     * The devices matching both the search query and the band filter.
+     *
+     * The filtering is **purely local**: the devices are already in memory,
+     * and no read is ever triggered by it.
+     */
+    val filteredRows: List<DeviceRow>
         get() {
             val needle = query.trim()
-            return devices.filter { device ->
-                matchesQuery(device, needle) && matchesFilter(device, filter)
+            return rows
+                .filter { row ->
+                    DeviceFiltering.matchesQuery(row, needle) &&
+                        DeviceFiltering.matchesBand(row.device, filter)
+                }
+                .sortedWith(DeviceOrdering.comparator(sort))
+        }
+
+    /**
+     * The devices matching the search and the filter, for the callers that
+     * only need the router's devices.
+     */
+    val filteredDevices: List<RouterDevice>
+        get() = filteredRows.map { it.device }
+
+    /**
+     * Why the list is empty.
+     *
+     * The reason matters: "no device at all" and "no device matching the
+     * current search" call for two different actions, and a single message
+     * would send the user the wrong way.
+     *
+     * It is null when the list is **not** empty: the reason only describes
+     * an empty list, and a list that shows devices has no reason to be
+     * empty.
+     */
+    val emptyReason: DeviceEmptyReason?
+        get() {
+            if (filteredRows.isNotEmpty()) return null
+            return when {
+                payloadAbsent -> DeviceEmptyReason.NO_REPLY
+                devices.isEmpty() && isFromCache -> DeviceEmptyReason.NO_DEVICE_CACHED
+                devices.isEmpty() -> DeviceEmptyReason.NO_DEVICE
+                query.isNotBlank() && filter != DeviceBandFilter.ALL ->
+                    DeviceEmptyReason.NO_MATCH_BOTH
+                query.isNotBlank() -> DeviceEmptyReason.NO_MATCH_QUERY
+                filter != DeviceBandFilter.ALL -> DeviceEmptyReason.NO_MATCH_FILTER
+                else -> null
             }
         }
-
-    private fun matchesQuery(device: RouterDevice, needle: String): Boolean {
-        if (needle.isEmpty()) return true
-        return device.name.contains(needle, ignoreCase = true) ||
-            device.ip.contains(needle, ignoreCase = true) ||
-            device.mac.contains(needle, ignoreCase = true)
-    }
-
-    private fun matchesFilter(device: RouterDevice, filter: DeviceFilter): Boolean =
-        when (filter) {
-            DeviceFilter.ALL -> true
-            DeviceFilter.WIFI -> device.presence == DevicePresence.ACTIVE
-            DeviceFilter.WIRED -> device.presence == DevicePresence.CABLED
-        }
 }
+
+/**
+ * Why the device list shows nothing.
+ */
+enum class DeviceEmptyReason {
+    /** The router answered without any device list. */
+    NO_REPLY,
+
+    /** The router knows no device, and the data comes from the cache. */
+    NO_DEVICE_CACHED,
+
+    /** The router knows no device. */
+    NO_DEVICE,
+
+    /** No device matches the search. */
+    NO_MATCH_QUERY,
+
+    /** No device is on the selected band. */
+    NO_MATCH_FILTER,
+
+    /** No device matches the search **and** the band. */
+    NO_MATCH_BOTH,
+}
+
 
 /**
  * Drives the device list screen.
@@ -147,6 +190,13 @@ data class DevicesUiState(
 class DevicesViewModel(
     private val repository: RouterRepository,
     private val refreshCoordinator: RefreshCoordinator,
+    /**
+     * The display preferences of the list.
+     *
+     * They are optional: without them the list keeps its default order and
+     * filter, and never writes anything.
+     */
+    private val preferences: DeviceListPreferencesStore? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DevicesUiState())
@@ -156,6 +206,35 @@ class DevicesViewModel(
         seedFromRepository()
         observeSessionLoss()
         observeReads()
+        loadMetadata()
+        observePreferences()
+    }
+
+    /**
+     * Adopts the display preferences that were saved.
+     *
+     * They are read **once**, when the screen is created. An unknown value
+     * falls back on the default: a preference written by a newer version
+     * must never break the list.
+     */
+    private fun observePreferences() {
+        val store = preferences ?: return
+        viewModelScope.launch {
+            store.sortName.collect { name ->
+                val sort = DeviceSort.entries.firstOrNull { it.name == name }
+                if (sort != null && sort != _state.value.sort) {
+                    _state.value = _state.value.copy(sort = sort)
+                }
+            }
+        }
+        viewModelScope.launch {
+            store.filterName.collect { name ->
+                val filter = DeviceBandFilter.entries.firstOrNull { it.name == name }
+                if (filter != null && filter != _state.value.filter) {
+                    _state.value = _state.value.copy(filter = filter)
+                }
+            }
+        }
     }
 
     /**
@@ -245,6 +324,10 @@ class DevicesViewModel(
                         payloadAbsent = false,
                         hasSnapshot = false,
                         isLoading = false,
+                        // The metadata are local, but they describe the
+                        // devices of an authenticated session: they leave
+                        // the memory with the devices themselves.
+                        metadata = emptyMap(),
                     )
                 } else if (state.connection is ConnectionState.NetworkChanged) {
                     // The network changed: the data on screen is the last
@@ -278,9 +361,69 @@ class DevicesViewModel(
         _state.value = _state.value.copy(query = query)
     }
 
-    /** Sets the family of devices to show. */
-    fun setFilter(filter: DeviceFilter) {
+    /** Sets the band filter to keep. */
+    fun setFilter(filter: DeviceBandFilter) {
         _state.value = _state.value.copy(filter = filter)
+        val store = preferences ?: return
+        viewModelScope.launch { store.saveFilter(filter.name) }
+    }
+
+    /** Sets the order the list is shown in. */
+    fun setSort(sort: DeviceSort) {
+        _state.value = _state.value.copy(sort = sort)
+        val store = preferences ?: return
+        viewModelScope.launch { store.saveSort(sort.name) }
+    }
+
+    /**
+     * Gives a device a custom name.
+     *
+     * The name is **local**: the router is never told about it, and the
+     * router's own name stays visible next to it. The rename does not
+     * trigger any read: it only writes on the disk of the phone.
+     *
+     * @param key the identity of the device — the canonical MAC address.
+     * @param name the name the user typed.
+     * @return true when the name was stored. It is false when the device has
+     *   no usable identity: the application would have no way to find it
+     *   again, and pretending otherwise would attach the name to the wrong
+     *   device.
+     */
+    fun renameDevice(key: String, name: String) {
+        viewModelScope.launch {
+            val stored = repository.renameDevice(key, name)
+            if (stored) {
+                // The state is updated from the store, so what is shown is
+                // exactly what was written.
+                _state.value = _state.value.copy(metadata = repository.deviceMetadata())
+            } else {
+                _state.value = _state.value.copy(
+                    errorMessage = "Cet appareil n'a pas d'identifiant stable : " +
+                        "impossible de lui attribuer un nom.",
+                )
+            }
+        }
+    }
+
+    /**
+     * Removes the custom name of a device.
+     *
+     * The router's own name is shown again.
+     */
+    fun clearDeviceName(key: String) {
+        viewModelScope.launch {
+            repository.clearDeviceName(key)
+            _state.value = _state.value.copy(metadata = repository.deviceMetadata())
+        }
+    }
+
+    /**
+     * Adopts the local metadata of the devices.
+     *
+     * It is called when the screen opens and after every rename.
+     */
+    private fun loadMetadata() {
+        _state.value = _state.value.copy(metadata = repository.deviceMetadata())
     }
 
     /**

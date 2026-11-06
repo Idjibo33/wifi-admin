@@ -351,8 +351,8 @@ Les tests du module `app` utilisent un `FakeAdapter` implémentant
 toucher au protocole. Les tests du cache utilisent un répertoire temporaire et
 une horloge injectable : aucun fichier réel de l'application n'est touché.
 
-Total : **453 tests** JVM, 0 échec, plus **20 tests instrumentés** exécutés
-sur un Pixel 7 Pro (Android 17) — voir `MISSION_09_DEVICE_VALIDATION_REPORT.md`.
+Total : **546 tests** JVM, 0 échec, plus **38 tests instrumentés** exécutés
+sur un Pixel 7 Pro (Android 17) — voir `MISSION_10_REPORT.md`.
 
 Le scénario d'expiration est **reproductible hors ligne** : voir
 `docs/MISSION_08_EXPIRY_VALIDATION.md` et `tools/fake_router_expiry.py`.
@@ -611,11 +611,158 @@ possible.
 
 ---
 
-## 11. Ce qui reste à faire
+## 11. Noms personnalisés, tri, filtres et dernière observation
+
+Trois fonctionnalités, toutes **locales au téléphone**. Le routeur n'en
+sait rien et ne le saura jamais.
+
+### 11.1 L'identité d'un appareil
+
+Le routeur n'expose **aucun** identifiant stable : les champs qu'il
+rapporte sont la MAC, l'adresse IP, le nom d'hôte, l'interface et
+l'expiration du bail. Les trois premiers peuvent changer sous les pieds de
+l'utilisateur.
+
+La clé est donc la **MAC canonique** :
+
+- la normalisation accepte les séparateurs en usage — deux-points,
+  tirets, points — et produit toujours la forme `aa:bb:cc:dd:ee:ff` en
+  minuscules ;
+- une valeur qui n'est pas douze chiffres hexadécimaux n'est **pas** une
+  MAC : elle ne produit aucune clé ;
+- **l'adresse IP n'est jamais une identité.** Elle change à chaque
+  renouvellement de bail et elle peut être réattribuée à un autre
+  appareil. Elle est stockée comme un attribut, jamais comme une clé ;
+- **le nom d'hôte n'est jamais une identité** : il est déclaré par
+  l'appareil, il peut être vide, et `DeviceMerger` le remplace par
+  `Unknown Device` quand il manque.
+
+Il n'y a **aucune clé de repli**. Le routeur ne fournit rien d'autre, et
+une association par IP serait une attribution de nom **fausse** — pire que
+la perte du nom.
+
+> **La limite assumée.** Un appareil qui randomise sa MAC à chaque
+> association — l'« adresse Wi-Fi privée » des téléphones modernes — est
+> un **appareil nouveau** à chaque fois. L'application ne prétend pas le
+> reconnaître : elle crée une nouvelle entrée et ne fusionne jamais
+> l'ancienne. Le nom personnalisé ne suit pas un tel appareil.
+
+Un appareil **sans** MAC exploitable ne porte ni nom ni observation : sans
+clé, l'application ne retrouverait pas l'entrée.
+
+### 11.2 La validation des noms
+
+Un nom est du texte que l'application affiche. Il n'est jamais
+interprété, mais il ne doit pas pouvoir **tromper** :
+
+- la forme **NFC** est appliquée : « café » et « café » sont le même nom,
+  et la recherche trouve l'un avec l'autre ;
+- les **caractères de contrôle** (C0, C1, DEL) sont retirés ;
+- les **indicateurs bidirectionnels** (`U+202E` et voisins) sont retirés :
+  un inverseur de sens ferait lire un nom à l'envers, ce qui est une
+  usurpation visuelle ;
+- la longueur est **plafonnée** à 64 caractères ;
+- un nom vide **supprime** le nom personnalisé.
+
+La normalisation est appliquée **au stockage**, pas à l'affichage : sinon
+la valeur sale resterait sur le disque.
+
+### 11.3 Le stockage des métadonnées
+
+Les noms personnalisés et les observations sont des **données
+personnelles** : ils nomment l'équipement de l'utilisateur. Ils vivent
+dans `noBackupFilesDir`, que le framework exclut de la sauvegarde cloud et
+du transfert d'appareil à appareil.
+
+Le format est celui du `SnapshotStore` : schéma versionné, **liste blanche
+de clés** (un secret ne peut pas y entrer structurellement), écriture
+atomique (`tmp` → `fsync` → `ATOMIC_MOVE`), garde de profondeur JSON,
+rejet et suppression des fichiers corrompus.
+
+**Un fichier par routeur.** Le nom du fichier est dérivé d'un hash de
+`(host, account, networkId)` — la même identité que le `SnapshotContext`.
+L'isolation est donc **structurelle** : le fichier de l'autre routeur
+n'existe pas dans le répertoire. Le contexte complet est **aussi** dans le
+document, et la comparaison à la lecture est une égalité exacte.
+
+> **La limite assumée.** Deux routeurs domestiques ont souvent la même
+> passerelle (`192.168.1.1`) et le même compte (`admin`). Ce qui les
+> distingue est l'identité du réseau — interface, plage d'adresses,
+> passerelle. Deux réseaux qui partagent les trois sont **considérés comme
+> le même** : c'est la limite déjà assumée par la Mission 09, et le BSSID
+> qui la lèverait exigerait `ACCESS_FINE_LOCATION`.
+
+### 11.4 La dernière observation
+
+La date est **le moment où le routeur a réellement répondu**, pas l'heure
+courante : c'est `snapshot.capturedAtMillis`, l'instant capturé par la
+fusion des listes.
+
+Ce choix règle les trois pièges d'un coup :
+
+| Situation | `capturedAtMillis` | Effet |
+|---|---|---|
+| Vraie lecture | l'instant de la lecture | l'observation avance |
+| Lecture **réutilisée** par le coordinateur | l'instant de la **première** lecture | l'observation **ne bouge pas** |
+| Snapshot **restauré du disque** | — | le chemin ne passe pas par `performRead` : **aucune** observation |
+| Réponse sans liste d'appareils | — | `payloadAbsent` : **aucune** observation |
+
+Le libellé ne prétend **jamais** connaître l'heure de déconnexion :
+l'application sait qu'un appareil était présent à la dernière lecture, et
+rien de plus. « Vu récemment » est une **borne**, pas un instant.
+
+La conservation est de **trente jours**. Une entrée qui porte un nom
+personnalisé est **conservée** au-delà : c'est le travail de l'utilisateur.
+La purge est déclenchée par l'application, jamais par le système — pas de
+`WorkManager`, pas d'`AlarmManager`.
+
+### 11.5 Le tri, les filtres et la recherche
+
+Les règles sont des **fonctions pures** : aucun état, aucun délai, testées
+sur la JVM.
+
+- **Par nom** : le collationneur français met les accents à leur place et
+  les chiffres avant les lettres.
+- **Par adresse IP** : **numérique**, octet par octet. Un tri
+  lexicographique placerait `192.168.1.100` avant `192.168.1.2` — les deux
+  sont faux.
+- **Par signal** : le RSSI décroissant, et les appareils **sans** signal
+  **en dernier**. Mélanger un `null` dans le classement revendiquerait un
+  niveau qui n'existe pas, et placerait un appareil filaire avant un
+  Wi-Fi très lointain.
+- Chaque comparateur se termine par un **critère de rupture** stable :
+  sans lui, la liste clignoterait à chaque rafraîchissement.
+
+Les filtres sont les **bandes** : tous, 2,4 GHz, 5 GHz, filaire. Ils se
+**recouvrent** à dessein : un appareil associé aux deux radios apparaît
+dans les deux, parce que le routeur le voit bien sur les deux.
+
+Le filtrage est **purement local** : les appareils sont déjà en mémoire,
+et aucune lecture n'est déclenchée. Un test de source et un test
+comportemental le prouvent.
+
+Les préférences de tri et de filtre sont conservées dans un fichier
+`DataStore` **distinct** des réglages de l'application : elles décrivent
+l'affichage, pas le routeur.
+
+### 11.6 La liste
+
+La carte montre le **nom** (personnalisé s'il existe), le **nom du
+routeur** en dessous, l'**adresse** et les **bandes**, le **signal**
+lorsque le routeur en a donné un, et la **dernière observation** pour un
+appareil qui n'est plus là.
+
+Le MAC sort de la liste : il identifie, il ne sert pas à identifier, et il
+est déjà dans la fiche.
+
+---
+
+## 12. Ce qui reste à faire
 | Sujet | État |
 |---|---|
 | Filtrage **pare-feu** (`cmd 23`) | **`UNAVAILABLE` sur ce firmware** (clôture du 30/10/2026). L'interface officielle reçoit la même réponse creuse que nous. Aucune intégration ne sera faite. Voir `FIREWALL_ANALYSIS.md` §13ter. |
 | Persistance du mot de passe via Keystore | Non implémentée — volontairement absente pour l'instant. |
+| Noms personnalisés, tri, filtres, dernière observation | **Existants** (Mission 10). Tout est **local** au téléphone : le routeur n'en sait rien. |
 | Support d'autres routeurs | L'architecture est prête (interface `RouterAdapter`), mais aucun second adaptateur n'existe. |
 | Interface Compose livrée | **Existante** : tableau de bord, liste des appareils, réglages, connexion. Aucun changement de périmètre. |
 | Interface de blocage (bouton Bloquer/Débloquer) | **Exclue** : la capacité est `UNAVAILABLE`, aucun bouton n'est exposé. |

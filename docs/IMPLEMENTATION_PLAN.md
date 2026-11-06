@@ -1218,3 +1218,72 @@ Tests ajoutés : `RefreshCoordinatorTest` (11), `ReadCoordinatorTest` (8),
 **Mission 09 livrée.** Les contrôles visuels de la Mission 08 (message
 d'expiration, bouton Retour) restent à confirmer sur le téléphone : ce sont
 des propriétés du framework Android, hors de portée d'un test JVM.
+
+---
+
+## 21. Mission 10 — identification et organisation des appareils (06/11/2026)
+
+### 21.1 Le périmètre
+
+Trois fonctionnalités, **toutes locales au téléphone** :
+
+- **A. Noms personnalisés** — renommer, modifier, supprimer. Le nom
+  d'origine du routeur reste visible et disponible.
+- **B. Recherche, tri et filtres** — recherche par nom personnalisé ou
+  nom d'origine ; tri par nom, adresse IP et puissance du signal ;
+  filtres par bande (tous, 2,4 GHz, 5 GHz, filaire) ; préférences
+  conservées localement ; état vide explicite.
+- **C. Dernière apparition** — la dernière observation **confirmée**, et
+  sa date.
+
+### 21.2 Les décisions
+
+| Décision | Raison |
+|---|---|
+| La clé d'un appareil est la **MAC canonique** | Le routeur n'expose aucun identifiant stable. L'IP change à chaque bail, le nom d'hôte est déclaré par l'appareil. |
+| **Aucune** clé de repli | Une association par IP attribuerait un nom **faux** à un autre appareil — pire que la perte du nom. |
+| Un appareil sans MAC ne porte **rien** | Sans clé, l'application ne le retrouverait pas. |
+| Le nom personnalisé est **local** | Il n'est **jamais** envoyé au routeur : le `RouterAdapter` reste à quatre membres, sans aucune opération mutante. |
+| Le timestamp est `snapshot.capturedAtMillis` | C'est l'instant où le routeur a **vraiment** répondu. Une lecture réutilisée ne fait donc pas avancer l'observation, et un instantané restauré du disque n'en crée aucune. |
+| Un fichier de métadonnées **par routeur** | L'isolation est structurelle : le fichier de l'autre routeur n'existe pas. |
+| Les métadonnées dans `noBackupFilesDir` | Ce sont des données personnelles : elles ne doivent pas être restaurées sur un autre téléphone. |
+| Purge à **trente jours**, sauf si un nom est porté | Le nom est le travail de l'utilisateur : il ne s'efface pas silencieusement. |
+| Les filtres sont les **bandes** | C'est la demande. Les filtres se recouvrent : un appareil bi-bande apparaît dans les deux. |
+| Le tri par IP est **numérique** | Un tri lexicographique place `192.168.1.100` avant `192.168.1.2`. |
+| Les appareils **sans** signal sont triés **en dernier** | Mélanger un `null` revendiquerait un niveau qui n'existe pas. |
+| La fiche appareil reste une **bottom sheet** | `PROTECTED_ROUTES` reste à trois routes, et le test qui le vérifie n'est pas touché. |
+
+### 21.3 Les tests
+
+| Suite | Tests |
+|---|---:|
+| `DeviceMetadataStoreTest` | 38 |
+| `DeviceObservationTest` | 7 |
+| `DeviceOrderingTest` | 14 |
+| `CustomNameViewModelTest` | 10 |
+| `Mission10BoundaryTest` | 12 |
+| `LastSeenPresentationTest` | 10 |
+| **Total JVM nouveau** | **91** |
+
+| Suite | Tests |
+|---|---:|
+| `router-core` | **193** |
+| `poc-cli` | **56** |
+| `app` | **297** |
+| **Total JVM** | **546** |
+
+Tests instrumentés sur un Pixel 7 Pro (Android 17) : **38**, dont 18
+nouveaux pour la Mission 10.
+
+Scénarios hors ligne : pare-feu **10/10**, expiration **3/3**, aucune
+écriture.
+
+### 21.4 Livrables
+
+- `docs/MISSION_10_VALIDATION.md` — procédure automatisée sur le téléphone.
+- `docs/MISSION_10_REPORT.md` — rapports des sous-agents et verdict.
+- `docs/ANDROID_ARCHITECTURE.md` §11 — architecture.
+
+### 21.5 Verdict
+
+**Mission 10 livrée**, sous réserve de la revue indépendante de sécurité.

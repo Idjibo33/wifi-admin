@@ -3,6 +3,8 @@ package dev.wifiadmin.app
 import android.app.Application
 import dev.wifiadmin.app.data.AndroidNetworkMonitor
 import dev.wifiadmin.app.data.AppClock
+import dev.wifiadmin.app.data.DeviceListPreferencesStore
+import dev.wifiadmin.app.data.DeviceMetadataStore
 import dev.wifiadmin.app.data.NetworkMonitor
 import dev.wifiadmin.app.data.RefreshCoordinator
 import dev.wifiadmin.app.data.RefreshPolicy
@@ -69,6 +71,30 @@ class AppContainer(application: Application) {
     )
 
     /**
+     * The local metadata of the devices: the custom names and the last
+     * confirmed observations.
+     *
+     * They live in `noBackupFilesDir` too, in their own directory: a
+     * custom name is **personal data** — it names the user's own
+     * equipment — and restoring it on another phone would be a leak.
+     *
+     * One file per router, the name derived from the router's identity:
+     * the metadata of one router can never be read for another one.
+     */
+    val deviceMetadataStore: DeviceMetadataStore = DeviceMetadataStore(
+        directory = File(application.noBackupFilesDir, "device-metadata")
+    )
+
+    /**
+     * The display preferences of the device list: the sort and the band
+     * filter.
+     *
+     * They are a preference of the screen, not a setting of the router.
+     */
+    val deviceListPreferences: DeviceListPreferencesStore =
+        DeviceListPreferencesStore(application)
+
+    /**
      * The scope that owns the automatic refresh.
      *
      * It belongs to the application, not to a screen: the refresh must
@@ -79,6 +105,7 @@ class AppContainer(application: Application) {
 
     val routerRepository: RouterRepository = RouterRepository(
         snapshotStore = snapshotStore,
+        metadataStore = deviceMetadataStore,
         clock = clock,
         scope = applicationScope,
         networkMonitor = networkMonitor,

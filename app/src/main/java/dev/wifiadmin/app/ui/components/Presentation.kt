@@ -9,6 +9,106 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * The message shown when the device was seen recently.
+ *
+ * The router never says when a device disconnected: it only says which
+ * devices it knows at the moment of the read. The application therefore
+ * knows the moment of the last read that saw the device, and **nothing**
+ * more.
+ */
+const val SEEN_RECENTLY_MESSAGE = "Vu récemment"
+
+/**
+ * The label of the last confirmed observation of a device.
+ *
+ * It is a **bound**, not an instant: the device was there at that moment,
+ * and it may have left at any time since. The wording must never suggest
+ * a known moment of disconnection.
+ */
+const val LAST_SEEN_LABEL = "Dernière observation connue"
+
+/**
+ * The explanation shown under the last observation.
+ *
+ * It says explicitly what the application does not know.
+ */
+const val LAST_SEEN_EXPLANATION =
+    "Cet appareil était présent lors de cette lecture. L'heure de sa " +
+        "déconnexion n'est pas connue."
+
+/**
+ * The label used when a device was never observed by a confirmed read.
+ */
+const val NEVER_SEEN_MESSAGE = "Aucune observation confirmée"
+
+/**
+ * The relative age of an observation, in French.
+ *
+ * The wording is deliberately a **bound**: "vu il y a 3 h" says the device
+ * was there at least three hours ago, which is what the application knows.
+ *
+ * @param observedAtMillis when the device was last observed, or null.
+ * @param nowMillis the current time.
+ * @return the wording, or null when there is no observation to show.
+ */
+fun formatLastSeen(observedAtMillis: Long?, nowMillis: Long): String? {
+    if (observedAtMillis == null) return null
+
+    val age = nowMillis - observedAtMillis
+    // A date in the future means the clock of the phone moved: nothing
+    // honest can be said about it.
+    if (age < 0) return null
+
+    return when {
+        age <= RECENT_WINDOW_MILLIS -> SEEN_RECENTLY_MESSAGE
+        age < 60 * 60_000L -> "Vu il y a ${(age / 60_000L).coerceAtLeast(1)} min"
+        age < 24 * 60 * 60_000L -> "Vu il y a ${age / 3_600_000L} h"
+        age < 7 * 24 * 60 * 60_000L -> "Vu il y a ${age / 86_400_000L} j"
+        else -> formatSnapshotDate(observedAtMillis)?.let { "Vu le $it" }
+    }
+}
+
+/**
+ * How long an observation stays "recent".
+ *
+ * The polling is every thirty seconds, so a device that was seen is
+ * detected as absent within a minute. After five minutes the absence is
+ * certain and "vu récemment" would be misleading.
+ */
+const val RECENT_WINDOW_MILLIS = 5 * 60 * 1000L
+
+/**
+ * The message shown when the device list is empty.
+ *
+ * The reason matters: "no device at all" and "no device matching the
+ * current search" call for two different actions, and a single message
+ * would send the user the wrong way.
+ */
+fun deviceEmptyMessage(
+    reason: dev.wifiadmin.app.ui.devices.DeviceEmptyReason,
+    query: String,
+    bandLabel: String,
+): String = when (reason) {
+    dev.wifiadmin.app.ui.devices.DeviceEmptyReason.NO_REPLY ->
+        "Réponse du routeur vide : aucune liste d'appareils n'a été reçue."
+
+    dev.wifiadmin.app.ui.devices.DeviceEmptyReason.NO_DEVICE_CACHED ->
+        "Aucun appareil n'était connu lors de la dernière lecture."
+
+    dev.wifiadmin.app.ui.devices.DeviceEmptyReason.NO_DEVICE ->
+        "Aucun appareil signalé par le routeur."
+
+    dev.wifiadmin.app.ui.devices.DeviceEmptyReason.NO_MATCH_QUERY ->
+        "Aucun appareil ne correspond à « $query »."
+
+    dev.wifiadmin.app.ui.devices.DeviceEmptyReason.NO_MATCH_FILTER ->
+        "Aucun appareil en $bandLabel."
+
+    dev.wifiadmin.app.ui.devices.DeviceEmptyReason.NO_MATCH_BOTH ->
+        "Aucun appareil en $bandLabel ne correspond à « $query »."
+}
+
+/**
  * The exact sentence shown when a session has expired.
  *
  * It is a constant so the screen and the tests can never drift apart.

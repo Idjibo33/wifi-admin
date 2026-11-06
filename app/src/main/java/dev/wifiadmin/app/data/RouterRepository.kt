@@ -49,6 +49,14 @@ class RouterRepository(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + ioDispatcher),
     private val freshness: ReadFreshnessPolicy = ReadFreshnessPolicy.Default,
     private val networkMonitor: NetworkMonitor? = null,
+    /**
+     * The local metadata of the devices.
+     *
+     * It is optional: without it the repository behaves exactly as before.
+     * It is written **only** when the router really answered with a device
+     * list, and never from a snapshot restored from the disk.
+     */
+    private val metadataStore: DeviceMetadataStorage? = null,
 ) {
 
     private val mutex = Mutex()
@@ -288,6 +296,108 @@ class RouterRepository(
         coordinator.invalidate()
     }
 
+    // -----------------------------------------------------------------
+    // The local metadata of the devices
+    // -----------------------------------------------------------------
+
+    /**
+     * The metadata of the devices of the **current** router.
+     *
+     * The metadata of another router is never returned: the store compares
+     * the contexts exactly and deletes a file that belongs to another one.
+     *
+     * @return the metadata, indexed by the device key. Empty when there is
+     *   none, or when the session is not open.
+     */
+    fun deviceMetadata(): Map<String, DeviceMetadata> {
+        val store = metadataStore ?: return emptyMap()
+        val context = currentMetadataContext() ?: return emptyMap()
+        val read = store.read(context)
+        return (read as? MetadataRead.Found)
+            ?.records
+            ?.associate { it.metadata.key to it.metadata }
+            ?: emptyMap()
+    }
+
+    /**
+     * Gives a device a custom name.
+     *
+     * The name is **local**: the router is never told about it, and the
+     * router's own name stays available.
+     *
+     * @param key the identity of the device — the canonical MAC address.
+     * @param name the name the user typed. It is sanitised before being
+     *   stored; an empty name removes the custom name.
+     * @return true when the name was stored.
+     */
+    suspend fun renameDevice(key: String, name: String): Boolean {
+        val store = metadataStore ?: return false
+        val context = currentMetadataContext() ?: return false
+        val canonicalKey = DeviceIdentity.keyOf(key) ?: return false
+        val sanitized = CustomName.sanitize(name)
+
+        return withContext(ioDispatcher) {
+            val result = if (sanitized.isEmpty()) {
+                store.clearCustomName(canonicalKey, context)
+            } else {
+                store.setCustomName(canonicalKey, sanitized, context)
+            }
+            result is MetadataWrite.Stored
+        }
+    }
+
+    /**
+     * Removes the custom name of a device.
+     *
+     * The router's own name is shown again.
+     */
+    suspend fun clearDeviceName(key: String): Boolean {
+        val store = metadataStore ?: return false
+        val context = currentMetadataContext() ?: return false
+        val canonicalKey = DeviceIdentity.keyOf(key) ?: return false
+
+        return withContext(ioDispatcher) {
+            store.clearCustomName(canonicalKey, context) is MetadataWrite.Stored
+        }
+    }
+
+    /**
+     * Removes the metadata that were not observed for a long time.
+     *
+     * The entries that carry a custom name are kept: they are the user's
+     * work. The purge is triggered by the application, never by the system.
+     *
+     * @return the number of entries that were removed.
+     */
+    suspend fun purgeExpiredMetadata(): Int {
+        val store = metadataStore ?: return 0
+        val context = currentMetadataContext() ?: return 0
+        return withContext(ioDispatcher) {
+            (store as? DeviceMetadataStore)?.purgeExpired(context, clock.wallClockMillis())
+                ?: 0
+        }
+    }
+
+    /**
+     * The metadata context of the current session.
+     *
+     * It is built from the same three parts as the snapshot context, and it
+     * is normalised the same way.
+     */
+    private fun currentMetadataContext(): MetadataContext? {
+        val host = _state.value.host
+        val account = _state.value.username
+        if (host.isBlank() || account.isBlank()) return null
+        return MetadataContext.of(host = host, account = account, networkId = currentNetworkId)
+    }
+
+    private fun metadataContext(context: SnapshotContext): MetadataContext =
+        MetadataContext.of(
+            host = context.host,
+            account = context.account,
+            networkId = context.networkId,
+        )
+
     /**
      * Runs the read, or joins the one already running.
      *
@@ -373,6 +483,18 @@ class RouterRepository(
                 if (context != null && !snapshot.payloadAbsent) {
                     withContext(ioDispatcher) {
                         snapshotStore?.write(snapshot, context)
+                        // The local metadata is updated **only** from a read
+                        // that really happened. The timestamp is the one the
+                        // snapshot carries — the moment the router answered —
+                        // and not the current time: a snapshot the
+                        // coordinator reused keeps the time of the original
+                        // read, so the observation never moves forward
+                        // without the router having spoken.
+                        metadataStore?.recordObservation(
+                            snapshot = snapshot,
+                            context = metadataContext(context),
+                            observedAtMillis = snapshot.capturedAtMillis,
+                        )
                     }
                 }
 

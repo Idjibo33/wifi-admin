@@ -1,0 +1,712 @@
+package dev.wifiadmin.app.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+
+/**
+ * The local metadata of the devices: the store, the identity and the names.
+ *
+ * The values are **documentation values**: `aa:bb:cc:dd:ee:01` and
+ * `192.168.1.10` are not a real device.
+ */
+class DeviceMetadataStoreTest {
+
+    private val context = MetadataContext.of(
+        host = "192.168.1.1",
+        account = "admin",
+        networkId = "wlan0|192.168.1.0/24|192.168.1.1",
+    )
+
+    private fun newStore(
+        clock: () -> Long = { 1_700_000_060_000L },
+    ): Pair<DeviceMetadataStore, File> {
+        val directory = Files.createTempDirectory("metadata").toFile()
+        return DeviceMetadataStore(directory, clock) to directory
+    }
+
+    private fun filesIn(directory: File): List<File> =
+        directory.listFiles()?.filter { it.isFile }?.sortedBy { it.name } ?: emptyList()
+
+    // -----------------------------------------------------------------
+    // The identity
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `a canonical mac address is accepted`() {
+        assertEquals("aa:bb:cc:dd:ee:01", DeviceIdentity.normalizeMac("aa:bb:cc:dd:ee:01"))
+        assertEquals("aa:bb:cc:dd:ee:01", DeviceIdentity.normalizeMac("AA:BB:CC:DD:EE:01"))
+        assertEquals("aa:bb:cc:dd:ee:01", DeviceIdentity.normalizeMac("  aa:bb:cc:dd:ee:01  "))
+    }
+
+    @Test
+    fun `the separators of the mac address do not matter`() {
+        // The router sends a plain string: the formatting is not guaranteed.
+        val expected = "aa:bb:cc:dd:ee:01"
+        assertEquals(expected, DeviceIdentity.normalizeMac("AABBCCDDEE01"))
+        assertEquals(expected, DeviceIdentity.normalizeMac("aa-bb-cc-dd-ee-01"))
+        assertEquals(expected, DeviceIdentity.normalizeMac("aabb.ccdd.ee01"))
+    }
+
+    @Test
+    fun `a value that cannot be a mac address is rejected`() {
+        assertNull(DeviceIdentity.normalizeMac(null))
+        assertNull(DeviceIdentity.normalizeMac(""))
+        assertNull(DeviceIdentity.normalizeMac("   "))
+        assertNull(DeviceIdentity.normalizeMac("null"))
+        assertNull(DeviceIdentity.normalizeMac("aa:bb:cc:dd:ee"))
+        assertNull(DeviceIdentity.normalizeMac("aa:bb:cc:dd:ee:01:02"))
+        assertNull(DeviceIdentity.normalizeMac("zz:bb:cc:dd:ee:01"))
+    }
+
+    // -----------------------------------------------------------------
+    // The names
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `a name is trimmed`() {
+        assertEquals("Poste", CustomName.sanitize("  Poste  "))
+    }
+
+    @Test
+    fun `a name is normalised to NFC`() {
+        // The decomposed and the composed forms of an accented letter are
+        // the same name, and the search must find it either way.
+        val decomposed = "Café"
+        val composed = "Café"
+
+        assertEquals(CustomName.sanitize(composed), CustomName.sanitize(decomposed))
+        assertTrue(CustomName.matches(composed, decomposed))
+    }
+
+    @Test
+    fun `the control characters are removed`() {
+        val name = "Poste\u0000\u001Bbell"
+
+        val sanitized = CustomName.sanitize(name)
+
+        assertFalse(sanitized.contains("\u0000"))
+        assertFalse(sanitized.contains("\u001B"))
+        assertTrue(sanitized.contains("Poste"))
+    }
+
+    @Test
+    fun `the bidirectional overrides are removed`() {
+        // A right-to-left override reverses the displayed text: a name could
+        // be read backwards.
+        val name = "exe\u202Etxt"
+
+        val sanitized = CustomName.sanitize(name)
+
+        assertFalse(sanitized.contains('\u202E'))
+        assertFalse(sanitized.contains('\u202D'))
+    }
+
+    @Test
+    fun `the invisible formatting characters are removed`() {
+        // The zero-width spaces, the byte order mark, the Arabic letter mark
+        // and the line separators carry no visible text: they could hide a
+        // name or break the layout of a single line.
+        val name = "Poste\u200B\u200C\u200D\u2060\uFEFF\u061C\u2028\u2029\u202F"
+
+        val sanitized = CustomName.sanitize(name)
+
+        assertEquals("Poste", sanitized)
+    }
+
+    @Test
+    fun `a name is truncated to the maximum length`() {
+        val long = "a".repeat(10_000)
+
+        val sanitized = CustomName.sanitize(long)
+
+        assertEquals(CustomName.MAX_LENGTH, sanitized.length)
+    }
+
+    @Test
+    fun `a blank name is not a valid name`() {
+        assertFalse(CustomName.isValid(""))
+        assertFalse(CustomName.isValid("   "))
+        assertFalse(CustomName.isValid(null))
+        assertTrue(CustomName.isValid("Poste"))
+    }
+
+    @Test
+    fun `the search ignores the case`() {
+        assertTrue(CustomName.matches("Téléphone de Marie", "téléphone"))
+        assertTrue(CustomName.matches("Téléphone de Marie", "MARIE"))
+        assertFalse(CustomName.matches("Téléphone de Marie", "poste"))
+    }
+
+    // -----------------------------------------------------------------
+    // The store
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `a custom name is written and read back`() {
+        val (store, _) = newStore()
+
+        val written = store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        assertEquals(MetadataWrite.Stored, written)
+        val read = store.read(context)
+        assertTrue(read is MetadataRead.Found)
+        val records = (read as MetadataRead.Found).records
+        assertEquals(1, records.size)
+        assertEquals("Téléphone de Marie", records.first().metadata.customName)
+        assertEquals("aa:bb:cc:dd:ee:01", records.first().metadata.key)
+    }
+
+    @Test
+    fun `a custom name is replaced, not duplicated`() {
+        val (store, _) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Premier nom", context)
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Second nom", context)
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1, read.records.size)
+        assertEquals("Second nom", read.records.first().metadata.customName)
+    }
+
+    @Test
+    fun `a custom name is removed`() {
+        val (store, _) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+        store.clearCustomName("aa:bb:cc:dd:ee:01", context)
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1, read.records.size)
+        assertNull(read.records.first().metadata.customName)
+    }
+
+    @Test
+    fun `a missing file is reported as missing`() {
+        val (store, _) = newStore()
+
+        assertEquals(MetadataRead.Missing, store.read(context))
+    }
+
+    @Test
+    fun `a corrupted file is rejected and deleted`() {
+        val (store, directory) = newStore()
+        val file = File(directory, context.fileName)
+        file.parentFile?.mkdirs()
+        file.writeText("{ this is not json")
+
+        val read = store.read(context)
+
+        assertEquals(
+            MetadataRead.Rejected(MetadataRead.Reason.CORRUPT),
+            read
+        )
+        assertFalse("the corrupted file must be deleted", file.exists())
+    }
+
+    @Test
+    fun `a truncated document is rejected`() {
+        val (store, directory) = newStore()
+        val file = File(directory, context.fileName)
+        file.parentFile?.mkdirs()
+        file.writeText("""{"schema":"dev.wifiadmin.devicemetadata","schemaVersion":1,""")
+
+        assertTrue(store.read(context) is MetadataRead.Rejected)
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun `an unknown schema version is rejected`() {
+        val (store, directory) = newStore()
+        val file = File(directory, context.fileName)
+        file.parentFile?.mkdirs()
+        file.writeText(
+            """{"schema":"dev.wifiadmin.devicemetadata","schemaVersion":99,""" +
+                """"writtenAtMillis":1700000000000,"context":{"host":"192.168.1.1",""" +
+                """"account":"admin","networkId":""},"entries":[]}"""
+        )
+
+        assertEquals(
+            MetadataRead.Rejected(MetadataRead.Reason.UNSUPPORTED_VERSION),
+            store.read(context)
+        )
+        assertFalse(file.exists())
+    }
+
+    @Test
+    fun `a file written by another router is never returned`() {
+        val (store, _) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        val otherContext = MetadataContext.of(
+            host = "192.168.0.1",
+            account = "admin",
+            networkId = "wlan0|192.168.0.0/24|192.168.0.1",
+        )
+        val read = store.read(otherContext)
+
+        assertTrue(
+            "the metadata of another router must never be returned",
+            read !is MetadataRead.Found || read.records.isEmpty()
+        )
+    }
+
+    @Test
+    fun `another account on the same router is isolated`() {
+        val (store, _) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        val otherAccount = MetadataContext.of(
+            host = "192.168.1.1",
+            account = "autre",
+            networkId = "wlan0|192.168.1.0/24|192.168.1.1",
+        )
+        val read = store.read(otherAccount)
+
+        assertTrue(
+            "the metadata of another account must never be returned",
+            read !is MetadataRead.Found || read.records.isEmpty()
+        )
+    }
+
+    @Test
+    fun `another network on the same router and account is isolated`() {
+        // The case the network identity is there for: two routers that
+        // share the address and the account, and differ only by the
+        // network they are reached on.
+        val (store, _) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        val otherNetwork = MetadataContext.of(
+            host = "192.168.1.1",
+            account = "admin",
+            networkId = "wlan0|192.168.2.0/24|192.168.1.1",
+        )
+
+        assertTrue(
+            "two networks must never share a file",
+            context.fileName != otherNetwork.fileName
+        )
+        val read = store.read(otherNetwork)
+        assertTrue(
+            "the metadata of another network must never be returned",
+            read !is MetadataRead.Found || read.records.isEmpty()
+        )
+    }
+
+    @Test
+    fun `the separator of the context cannot make two routers collide`() {
+        // The hash is built on length-prefixed parts: a separator inside a
+        // part cannot make two different contexts produce the same file.
+        val first = MetadataContext.of("a|b", "c", "")
+        val second = MetadataContext.of("a", "b|c", "")
+
+        assertTrue(
+            "two different contexts must never share a file",
+            first.fileName != second.fileName
+        )
+    }
+
+    @Test
+    fun `the temporary file does not survive a write`() {
+        val (store, directory) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        assertFalse(
+            "no temporary file must remain",
+            filesIn(directory).any { it.name.endsWith(".tmp") }
+        )
+    }
+
+    @Test
+    fun `the file contains no credential field`() {
+        val (store, directory) = newStore()
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        val file = File(directory, context.fileName)
+        val text = file.readText()
+        listOf("password", "passwd", "token", "session", "challenge", "cookie")
+            .forEach { word ->
+                assertFalse(
+                    "the file must not contain the field $word",
+                    text.contains(word, ignoreCase = true)
+                )
+            }
+    }
+
+    @Test
+    fun `a name with a quote is stored and read back identically`() {
+        val (store, _) = newStore()
+        val name = """Il a dit "bonjour" \ et est parti"""
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", name, context)
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(name, read.records.first().metadata.customName)
+    }
+
+    // -----------------------------------------------------------------
+    // The observations
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `a confirmed read records the observation of the devices`() {
+        val (store, _) = newStore()
+
+        val written = store.recordObservation(
+            snapshot = dev.wifiadmin.router.DeviceSnapshot(
+                devices = listOf(
+                    dev.wifiadmin.router.RouterDevice(
+                        mac = "aa:bb:cc:dd:ee:01",
+                        ip = "192.168.1.10",
+                        name = "Poste",
+                        bands = emptySet(),
+                        signal = null,
+                        interfaceName = "wl0",
+                        leaseExpiry = null,
+                        ipv6 = null,
+                        presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+                    )
+                ),
+                capturedAtMillis = 1_700_000_000_000L,
+            ),
+            context = context,
+            observedAtMillis = 1_700_000_000_000L,
+        )
+
+        assertEquals(MetadataWrite.Stored, written)
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1, read.records.size)
+        assertEquals(1_700_000_000_000L, read.records.first().metadata.lastSeenMillis)
+        assertEquals("192.168.1.10", read.records.first().metadata.lastIp)
+    }
+
+    @Test
+    fun `a device that keeps its address keeps its observation`() {
+        val (store, _) = newStore()
+        val device = dev.wifiadmin.router.RouterDevice(
+            mac = "aa:bb:cc:dd:ee:01",
+            ip = "192.168.1.10",
+            name = "Poste",
+            bands = emptySet(),
+            signal = null,
+            interfaceName = "wl0",
+            leaseExpiry = null,
+            ipv6 = null,
+            presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+        )
+
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(device)),
+            context,
+            1_700_000_000_000L,
+        )
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(device)),
+            context,
+            1_700_000_030_000L,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1_700_000_030_000L, read.records.first().metadata.lastSeenMillis)
+    }
+
+    @Test
+    fun `a device that changed its address keeps its observation`() {
+        val (store, _) = newStore()
+        val first = dev.wifiadmin.router.RouterDevice(
+            mac = "aa:bb:cc:dd:ee:01",
+            ip = "192.168.1.10",
+            name = "Poste",
+            bands = emptySet(),
+            signal = null,
+            interfaceName = "wl0",
+            leaseExpiry = null,
+            ipv6 = null,
+            presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+        )
+        val second = first.copy(ip = "192.168.1.42")
+
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(first)),
+            context,
+            1_700_000_000_000L,
+        )
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(second)),
+            context,
+            1_700_000_030_000L,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1, read.records.size)
+        assertEquals(1_700_000_030_000L, read.records.first().metadata.lastSeenMillis)
+        assertEquals("192.168.1.42", read.records.first().metadata.lastIp)
+    }
+
+    @Test
+    fun `a device that disappeared keeps its observation`() {
+        val (store, _) = newStore()
+        val device = dev.wifiadmin.router.RouterDevice(
+            mac = "aa:bb:cc:dd:ee:01",
+            ip = "192.168.1.10",
+            name = "Poste",
+            bands = emptySet(),
+            signal = null,
+            interfaceName = "wl0",
+            leaseExpiry = null,
+            ipv6 = null,
+            presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+        )
+
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(device)),
+            context,
+            1_700_000_000_000L,
+        )
+        // The device is gone: the snapshot does not show it any more.
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(emptyList()),
+            context,
+            1_700_000_030_000L,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(
+            "the last observation must not move when the device is absent",
+            1_700_000_000_000L,
+            read.records.first().metadata.lastSeenMillis
+        )
+    }
+
+    @Test
+    fun `an observation never goes backwards`() {
+        val (store, _) = newStore()
+        val device = dev.wifiadmin.router.RouterDevice(
+            mac = "aa:bb:cc:dd:ee:01",
+            ip = "192.168.1.10",
+            name = "Poste",
+            bands = emptySet(),
+            signal = null,
+            interfaceName = "wl0",
+            leaseExpiry = null,
+            ipv6 = null,
+            presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+        )
+
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(device)),
+            context,
+            1_700_000_030_000L,
+        )
+        // A read that carries an older capture time must not move the
+        // observation backwards.
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(device)),
+            context,
+            1_700_000_000_000L,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1_700_000_030_000L, read.records.first().metadata.lastSeenMillis)
+    }
+
+    @Test
+    fun `a custom name survives the observations`() {
+        val (store, _) = newStore()
+        val device = dev.wifiadmin.router.RouterDevice(
+            mac = "aa:bb:cc:dd:ee:01",
+            ip = "192.168.1.10",
+            name = "Poste",
+            bands = emptySet(),
+            signal = null,
+            interfaceName = "wl0",
+            leaseExpiry = null,
+            ipv6 = null,
+            presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+        )
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(listOf(device)),
+            context,
+            1_700_000_000_000L,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals("Téléphone de Marie", read.records.first().metadata.customName)
+    }
+
+    // -----------------------------------------------------------------
+    // The retention
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `an old entry without a custom name is purged`() {
+        val (store, _) = newStore()
+        val old = 1_700_000_000_000L
+        val now = old + DeviceMetadataStore.RETENTION_MILLIS + 1_000L
+
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(
+                listOf(
+                    dev.wifiadmin.router.RouterDevice(
+                        mac = "aa:bb:cc:dd:ee:01",
+                        ip = "192.168.1.10",
+                        name = "Poste",
+                        bands = emptySet(),
+                        signal = null,
+                        interfaceName = "wl0",
+                        leaseExpiry = null,
+                        ipv6 = null,
+                        presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+                    )
+                ),
+                capturedAtMillis = old,
+            ),
+            context,
+            old,
+        )
+
+        val removed = store.purgeExpired(context, now)
+
+        assertEquals(1, removed)
+        val read = store.read(context) as MetadataRead.Found
+        assertTrue(read.records.isEmpty())
+    }
+
+    @Test
+    fun `an old entry with a custom name is kept`() {
+        val (store, _) = newStore()
+        val old = 1_700_000_000_000L
+        val now = old + DeviceMetadataStore.RETENTION_MILLIS + 1_000L
+
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Téléphone de Marie", context)
+
+        val removed = store.purgeExpired(context, now)
+
+        assertEquals(0, removed)
+        val read = store.read(context) as MetadataRead.Found
+        assertEquals(1, read.records.size)
+        assertNotNull(read.records.first().metadata.customName)
+    }
+
+    @Test
+    fun `an entry with neither a name nor an observation is purged`() {
+        // Removing the name of a device that was never observed leaves an
+        // entry that holds nothing: it must not stay forever.
+        val (store, _) = newStore()
+        store.setCustomName("aa:bb:cc:dd:ee:01", "Poste", context)
+        store.clearCustomName("aa:bb:cc:dd:ee:01", context)
+
+        // The removal itself keeps the record, as `a custom name is
+        // removed` requires. The next observation writes the file and the
+        // purge then drops the entry, which holds nothing.
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(
+                emptyList(),
+                capturedAtMillis = 1_700_000_060_000L,
+            ),
+            context,
+            1_700_000_060_000L,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+
+        assertTrue("an empty entry must be gone", read.records.isEmpty())
+    }
+
+    @Test
+    fun `the purge happens on a normal observation`() {
+        // The purge must not depend on a separate call: the application
+        // never schedules one. A read that no longer sees the device is
+        // enough to persist the expiry.
+        var now = 1_700_000_060_000L
+        val (store, _) = newStore { now }
+        val old = 1_700_000_000_000L
+
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(
+                listOf(
+                    dev.wifiadmin.router.RouterDevice(
+                        mac = "aa:bb:cc:dd:ee:01",
+                        ip = "192.168.1.10",
+                        name = "Poste",
+                        bands = emptySet(),
+                        signal = null,
+                        interfaceName = "wl0",
+                        leaseExpiry = null,
+                        ipv6 = null,
+                        presence = dev.wifiadmin.router.DevicePresence.ACTIVE,
+                    )
+                ),
+                capturedAtMillis = old,
+            ),
+            context,
+            old,
+        )
+
+        now = old + DeviceMetadataStore.RETENTION_MILLIS + 1_000L
+        store.recordObservation(
+            dev.wifiadmin.router.DeviceSnapshot(emptyList(), capturedAtMillis = now),
+            context,
+            now,
+        )
+
+        val read = store.read(context) as MetadataRead.Found
+        assertTrue("the expired entry must be gone", read.records.isEmpty())
+    }
+
+    @Test
+    fun `a repeated observation does not rewrite the file`() {
+        var now = 1_700_000_060_000L
+        val (store, _) = newStore { now }
+        val snapshot = FakeRouterAdapter.oneDevice(1_700_000_000_000L)
+
+        store.recordObservation(snapshot, context, snapshot.capturedAtMillis)
+        val first = (store.read(context) as MetadataRead.Found).records
+            .first().writtenAtMillis
+
+        now += 10_000L
+        store.recordObservation(snapshot, context, snapshot.capturedAtMillis)
+        val second = (store.read(context) as MetadataRead.Found).records
+            .first().writtenAtMillis
+
+        assertEquals("an unchanged observation must not rewrite", first, second)
+    }
+
+    // -----------------------------------------------------------------
+    // The context
+    // -----------------------------------------------------------------
+
+    @Test
+    fun `the context is normalised like the snapshot context`() {
+        val context = MetadataContext.of(" 192.168.1.1 ", " Admin ", " wlan0 ")
+
+        assertEquals("192.168.1.1", context.host)
+        // The account keeps its case, like the snapshot context does.
+        assertEquals("Admin", context.account)
+        assertEquals("wlan0", context.networkId)
+    }
+
+    @Test
+    fun `two routers have two different files`() {
+        val first = MetadataContext.of("192.168.1.1", "admin", "wlan0|192.168.1.0/24|192.168.1.1")
+        val second = MetadataContext.of("192.168.0.1", "admin", "wlan0|192.168.0.0/24|192.168.0.1")
+
+        assertTrue(
+            "two routers must never share a file",
+            first.fileName != second.fileName
+        )
+    }
+}
