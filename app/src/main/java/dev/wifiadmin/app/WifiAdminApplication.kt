@@ -9,8 +9,15 @@ import dev.wifiadmin.app.data.NetworkMonitor
 import dev.wifiadmin.app.data.RefreshCoordinator
 import dev.wifiadmin.app.data.RefreshPolicy
 import dev.wifiadmin.app.data.RouterAddressResolver
+import android.net.ConnectivityManager
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.SettingsStore
+import dev.wifiadmin.app.data.speedtest.AndroidWifiLinkInfoProvider
+import dev.wifiadmin.app.data.speedtest.DisabledSpeedTestEngine
+import dev.wifiadmin.app.data.speedtest.SpeedTestPolicy
+import dev.wifiadmin.app.data.speedtest.SpeedTestPreferencesStore
+import dev.wifiadmin.app.data.speedtest.SpeedTestRepository
+import dev.wifiadmin.app.data.speedtest.WifiLinkInfoProvider
 import dev.wifiadmin.app.data.SnapshotStore
 import dev.wifiadmin.app.data.SystemAppClock
 import kotlinx.coroutines.CoroutineScope
@@ -109,6 +116,25 @@ class AppContainer(application: Application) {
         clock = clock,
         scope = applicationScope,
         networkMonitor = networkMonitor,
+    )
+
+    /** Link info provider (phone ↔ access point), no permission needed. */
+    val wifiLinkInfoProvider: WifiLinkInfoProvider = AndroidWifiLinkInfoProvider(
+        connectivity = application.getSystemService(ConnectivityManager::class.java)!!
+    )
+
+    /** The Internet speed test engine: disabled until a provider is validated. */
+    val speedTestEngine: dev.wifiadmin.app.data.speedtest.SpeedTestEngine = DisabledSpeedTestEngine()
+
+    val speedTestPreferences: SpeedTestPreferencesStore = SpeedTestPreferencesStore(application)
+
+    val speedTestRepository: SpeedTestRepository = SpeedTestRepository(
+        engine = speedTestEngine,
+        monitor = networkMonitor,
+        linkProvider = wifiLinkInfoProvider,
+        clock = clock,
+        scope = applicationScope,
+        policy = SpeedTestPolicy(),
     )
 
     /**

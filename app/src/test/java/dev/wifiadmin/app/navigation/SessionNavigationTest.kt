@@ -161,6 +161,6 @@ class SessionNavigationTest {
                 shouldLeaveProtectedScreen(ConnectionState.SessionExpired, route)
             )
         }
-        assertEquals(3, PROTECTED_ROUTES.size)
+        assertEquals(4, PROTECTED_ROUTES.size)
     }
 }

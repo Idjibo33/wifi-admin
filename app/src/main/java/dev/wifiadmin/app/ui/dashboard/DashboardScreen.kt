@@ -70,6 +70,7 @@ import dev.wifiadmin.router.WifiBand
 fun DashboardScreen(
     viewModel: DashboardViewModel,
     onSeeActives: (() -> Unit)? = null,
+    onOpenSpeedTest: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -103,7 +104,7 @@ fun DashboardScreen(
                 errorMessage = state.errorMessage,
                 modifier = Modifier.fillMaxSize()
             ) {
-                DashboardContent(state = state, onSeeActives = onSeeActives)
+                DashboardContent(state = state, onSeeActives = onSeeActives, onOpenSpeedTest = onOpenSpeedTest)
             }
         }
     }
@@ -120,6 +121,7 @@ private fun dashboardSubtitle(state: DashboardUiState): String? {
 internal fun DashboardContent(
     state: DashboardUiState,
     onSeeActives: (() -> Unit)? = null,
+    onOpenSpeedTest: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val snapshot = state.snapshot
@@ -300,6 +302,36 @@ internal fun DashboardContent(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                }
+            }
+        }
+
+        if (onOpenSpeedTest != null) {
+            item(key = "speedtest", contentType = "hero") {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(WifiDims.Space4),
+                        verticalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                    ) {
+                        Text(
+                            text = "Test de vitesse Internet",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Text(
+                            text = "Mesure le débit Internet via le Wi-Fi (débits réels, plafonds 20/10 Mo, 30 s).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        TextButton(onClick = onOpenSpeedTest) {
+                            Text("Ouvrir le test de vitesse")
+                        }
+                    }
                 }
             }
         }

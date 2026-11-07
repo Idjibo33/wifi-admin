@@ -7,6 +7,7 @@ import dev.wifiadmin.app.ui.dashboard.DashboardViewModel
 import dev.wifiadmin.app.ui.devices.DevicesViewModel
 import dev.wifiadmin.app.ui.login.LoginViewModel
 import dev.wifiadmin.app.ui.settings.SettingsViewModel
+import dev.wifiadmin.app.ui.speedtest.SpeedTestViewModel
 
 /**
  * Creates the ViewModels of the app.
@@ -42,6 +43,14 @@ class WifiAdminViewModelFactory(
 
         modelClass.isAssignableFrom(SettingsViewModel::class.java) ->
             SettingsViewModel(container.routerRepository, container.settingsStore) as T
+
+        modelClass.isAssignableFrom(SpeedTestViewModel::class.java) ->
+            SpeedTestViewModel(
+                repository = container.speedTestRepository,
+                preferences = container.speedTestPreferences,
+                monitor = container.networkMonitor,
+                linkProvider = container.wifiLinkInfoProvider,
+            ) as T
 
         else -> throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")
     }

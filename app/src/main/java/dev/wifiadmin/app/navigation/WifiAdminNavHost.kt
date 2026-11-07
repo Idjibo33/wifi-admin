@@ -34,6 +34,8 @@ import dev.wifiadmin.app.ui.login.LoginScreen
 import dev.wifiadmin.app.ui.login.LoginViewModel
 import dev.wifiadmin.app.ui.settings.SettingsScreen
 import dev.wifiadmin.app.ui.settings.SettingsViewModel
+import dev.wifiadmin.app.ui.speedtest.SpeedTestScreen
+import dev.wifiadmin.app.ui.speedtest.SpeedTestViewModel
 
 /** The screens of the application. */
 sealed class Route(val path: String) {
@@ -41,6 +43,7 @@ sealed class Route(val path: String) {
     data object Dashboard : Route("dashboard")
     data object Devices : Route("devices")
     data object Settings : Route("settings")
+    data object SpeedTest : Route("speedtest")
 }
 
 /** The entries of the bottom navigation bar. */
@@ -153,7 +156,19 @@ fun WifiAdminNavHost(
                             launchSingleTop = true
                             restoreState = true
                         }
+                    },
+                    onOpenSpeedTest = {
+                        navController.navigate(Route.SpeedTest.path) {
+                            launchSingleTop = true
+                        }
                     }
+                )
+            }
+            composable(Route.SpeedTest.path) {
+                val viewModel: SpeedTestViewModel = viewModel(factory = viewModelFactory)
+                SpeedTestScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable(Route.Devices.path) {
