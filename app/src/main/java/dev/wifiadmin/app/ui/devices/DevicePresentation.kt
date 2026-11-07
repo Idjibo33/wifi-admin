@@ -249,3 +249,39 @@ object DeviceFiltering {
             row.device.mac.contains(needle.trim(), ignoreCase = true)
     }
 }
+
+/**
+ * The three sections of the device list.
+ *
+ * Grouping is done **after** filtering and sorting: the sorted order is
+ * preserved inside each section, so a stable sort never flickers when the
+ * router is polled. The sections only use the presence the router
+ * reported; they never invent a device category the router did not give.
+ */
+enum class DeviceSection(val title: String) {
+    ACTIVES("Actifs"),
+    WIRED("Filaires"),
+    PREVIOUSLY_SEEN("Vus précédemment"),
+}
+
+/** The section of a device, derived from its presence only. */
+fun DeviceRow.section(): DeviceSection = when (device.presence) {
+    dev.wifiadmin.router.DevicePresence.ACTIVE -> DeviceSection.ACTIVES
+    dev.wifiadmin.router.DevicePresence.CABLED -> DeviceSection.WIRED
+    dev.wifiadmin.router.DevicePresence.STALE,
+    dev.wifiadmin.router.DevicePresence.UNKNOWN -> DeviceSection.PREVIOUSLY_SEEN
+}
+
+/**
+ * Groups already filtered and sorted rows into the three sections.
+ *
+ * Only non-empty sections are returned, in the Actives / Wired / Previous
+ * order. The order inside each section is the incoming order.
+ */
+fun groupRows(rows: List<DeviceRow>): List<Pair<DeviceSection, List<DeviceRow>>> {
+    val ordered = DeviceSection.entries
+    return ordered.mapNotNull { section ->
+        val inSection = rows.filter { it.section() == section }
+        if (inSection.isEmpty()) null else section to inSection
+    }
+}

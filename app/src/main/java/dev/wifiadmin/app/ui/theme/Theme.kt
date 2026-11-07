@@ -91,10 +91,20 @@ private val AppTypography = Typography(
         lineHeight = 28.sp,
         fontWeight = FontWeight.SemiBold
     ),
+    titleLarge = TextStyle(
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        fontWeight = FontWeight.SemiBold
+    ),
     titleMedium = TextStyle(
         fontSize = 16.sp,
         lineHeight = 24.sp,
         fontWeight = FontWeight.SemiBold
+    ),
+    titleSmall = TextStyle(
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Medium
     ),
     bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
     bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
@@ -109,13 +119,30 @@ private val AppTypography = Typography(
         lineHeight = 16.sp,
         fontWeight = FontWeight.Medium
     ),
+    labelSmall = TextStyle(
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium
+    ),
+    headlineMedium = TextStyle(
+        fontSize = 28.sp,
+        lineHeight = 36.sp,
+        fontWeight = FontWeight.SemiBold
+    ),
+    displayLarge = TextStyle(
+        fontSize = 36.sp,
+        lineHeight = 44.sp,
+        fontWeight = FontWeight.SemiBold
+    ),
 )
 
 @Composable
 fun WifiAdminTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic colour follows the wallpaper on Android 12+.
-    dynamicColor: Boolean = true,
+    // The brand palette stays stable: dynamic colour follows the wallpaper
+    // on Android 12+ and would erase the WiFi Admin identity and the
+    // contrast validated for the presence badges.
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
