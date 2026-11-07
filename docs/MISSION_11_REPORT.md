@@ -190,11 +190,123 @@ reste dans le même endroit, sans lecture supplémentaire.
 
 ---
 
-## 8. Verdict
+---
 
-**Mission 11 accomplie.**
+## 8. Complément 07/11/2026 — modernisation profonde (PR #4, même branche `feature/mission-11`)
 
-- Le design system est homogène et garde-fouillé par des tests.
-- L'accessibilité de base est en place et testée.
-- Aucune régression détectée sur les Missions 08, 09 et 10.
-- La PR vers `develop` est prête pour revue. **Aucun merge.**
+> Le §1-7 ci-dessus décrit le polissage initial du 06/11. Le présent complément est la
+> refonte visuelle demandée : l'utilisateur a refusé une « simple série d'ajustements » et
+> exigé une modernisation **clairement perceptible**, re-pensant composition, hiérarchie et
+> navigation. Les quatre sous-agents ont été exécutés en parallèle en lecture seule puis
+> intégrés par l'agent principal. **Aucun merge, aucun `main`, aucun force-push.**
+
+### 8.1 Direction visuelle arbitrée
+
+**« Instrument honnête, sobriété d'atelier »** — 3 principes : vérité avant décoration
+(statut toujours visible, jamais d'état inconnu transformé en certitude), gravité
+hiérarchique (Statut tonal / Action / Contenu neutre), densité maîtrisée et scan rapide.
+
+### 8.2 Écrans modernisés
+
+| Écran | Avant | Après |
+|---|---|---|
+| **Tableau de bord** | 6 `StatCard` égales + carte « Dernière lecture » + carte massive « Filtrage MAC » (le plus grand bloc de l'écran) | `AppTopBar` avec sous-titre de fraîcheur (« Lecture 06/11 à 15:38 · en direct »), hero `primaryContainer` combiné « N actifs sur M connus » avec pont « Voir les N actifs » vers la liste, 3 cartes `Actifs/Filaire/Périmés` égales (icône `History` pour Périmés, plus de `Router`), bandes en carte `surfaceContainer` en **liste d'associations** avec explication du bi-bande, « Dernière lecture » discrète, « Filtrage MAC » en `InfoNoticeCard` repliable |
+| **Liste** | Liste plate, signal `-58 dBm` seul, chips + tri sur la même ligne, hauteur fixe 48 dp qui casse à 200 % | Groupes `Actifs / Filaires / Vus précédemment` (`groupRows`, ordre trié préservé), signal en **barres 4 niveaux + libellé** (`SignalBars` + `signalQualityLabel`), chips sur une ligne et tri sur la suivante, `heightIn(min=48.dp)`, `imePadding` local, `SectionHeader` avec `heading()` |
+| **Détails + renommage** | 12 `DetailRow` à plat, double `HorizontalDivider`, suppression du surnom en bas du scroll | Carte identité `primaryContainer` (nom, badge, IP·bande·signal), 2 CTA en tête (`Renommer` + `Retirer le surnom`), sections **Statut / Chronologie / Détails techniques** (repliables, ouvertes par défaut pour ne pas masquer les champs attendus par les tests), texte cache corrigé en `onSurfaceVariant` |
+| **Connexion** | `DetectedRouterRow` passive, aide loin du bouton, champs toujours actifs pendant la connexion | État réseau en carte `surfaceContainer` explicite, aide « Le mot de passe n'est pas conservé… » **sous** le bouton, champs désactivés pendant `isConnecting`, `AnimatedVisibility` sur les messages, `heightIn` 48/56 dp conservés |
+| **Paramètres** | Aucun `TopAppBar`, logout neutre, confirmation sans feedback | `TopAppBar` (« Réglages »), zone de risque `errorContainer` pour « Se déconnecter » avec `AlertDialog` de confirmation, tuiles `SettingsSection` inchangées, carte info `secondaryContainer` conservée |
+| **Navigation** | 3 onglets « Tableau de bord/Appareils/Réglages », `TopAppBar` sans sous-titre | `BottomBar` extraite sans changement de comportement (`popUpTo/saveState/restoreState` intacts), sous-titres de fraîcheur sur Dashboard et Liste, pont Dashboard → Liste |
+
+### 8.3 Design system
+
+- Nouveau `ui/theme/Dimens.kt` : `Space1/2/3/4/6/8`, `TouchMin` 48 dp, `FieldMin` 56 dp,
+  `IconSm/Md/Banner/State/Login`, `CardPaddingH/V`, `BadgeMinH/Padding`.
+- `Theme.kt` : `titleLarge 22/28 SemiBold`, `titleSmall`, `labelSmall`, `headlineMedium 28/36`,
+  `displayLarge 36/44` ajoutés ; **`dynamicColor = false` par défaut** (identité stable +
+  contraste des badges garanti). Palettes clair/sombre inchangées.
+- `CommonComponents.kt` : `rememberAnimationEnabled/rememberFadeMillis` (respecte
+  `ANIMATOR_DURATION_SCALE`), `AppTopBar`, `ScreenContent` (fade sur clés stables, jamais
+  sur le `UiState` entier), `InfoNoticeCard`, `SectionHeader`, `SignalBars` + `signalBarsLevel`.
+  `StatCard/LoadingState/ErrorState/EmptyState/CachedDataBanner/DetailRow` conservent leurs
+  `testTag`, `liveRegion` et `stateDescription`.
+- Icônes : `Filled` uniquement, aucune catégorie d'appareil inventée, distinction par
+  `presence/bands/interface/signal` uniquement.
+- États : textes exacts inchangés (`staleDataMessage`, `EXPIRY_MESSAGE`, `NETWORK_CHANGED_MESSAGE`,
+  `deviceEmptyMessage`, `signalQualityLabel`, `formatLastSeen`). Aucun « déconnecté », aucune
+  date de déconnexion inventée.
+
+### 8.4 Micro-interactions
+
+Fade léger entre états d'écran, `AnimatedVisibility` pour les bannières et la carte info,
+`contentType` + `animateItem` pour la liste (désactivés quand les animations système sont
+réduites). Aucune animation permanente, aucune dépendance décorative, aucun `WindowSizeClass`
+(hors catalogue — grille en `Row weight(1f)`, 3 colonnes sur Dashboard).
+
+### 8.5 Résultats des sous-agents
+
+- **Sous-agent 1 (Product Designer)** : audit + direction « atelier de diagnostic », organisation
+  par écran, comparaison avant/après, plan en 7 phases. Arbitrage : `dynamicColor=false`,
+  groupes de liste, hero combiné, filtrage MAC repliable, logout destructif.
+- **Sous-agent 2 (Android UI Engineer)** : architecture Compose, extraction de composants,
+  préservation `DeviceList` publique + `testTag`, protection lifecycle/polling/back/keyboard.
+  Aucun ViewModel ni `data/` touché.
+- **Sous-agent 3 (Design System & accessibilité)** : tokens typographie/espacements/surfaces/icônes,
+  matrice d'états mot pour mot, WCAG AA, 48 dp, TalkBack, police 200 %, petits écrans.
+- **Sous-agent 4 (QA/perf/sécurité)** : revue indépendante, risques R1-R7, pyramide de tests,
+  anonymisation des captures, plan before/after clair/sombre + 320 dp + police agrandie.
+
+Aucun sous-agent n'a modifié de fichier ; aucun n'a modifié les mêmes fichiers.
+
+### 8.6 Résultats des tests
+
+- JVM : `router-core` 193, `poc-cli` 56, `app` **309 + 7 nouveaux** (`Mission11ModernizationTest` :
+  bi-bande, seuils signal, `signalBarsLevel`, date du dernier refresh, `statCardDescription`,
+  `groupRows` ordre et omission) — **0 échec**.
+- Build : `assembleDebug` + `assembleDebugAndroidTest` OK.
+- Instrumentés : **non rejoués ici**, `adb` introuvable et aucun émulateur. Les 41 tests du
+  06/11 restent la référence ; les `testTag` et `semantics` ont été préservés explicitement
+  pour ne pas casser `DeviceAccessibilityInstrumentedTest` et consorts.
+- Scénarios hors ligne : pare-feu 10/10, expiration 3/3 — **OK**, aucune écriture.
+
+### 8.7 Fichiers affectés (complément seul)
+
+| Fichier | Nature |
+|---|---|
+| `ui/theme/Dimens.kt` | **nouveau** : tokens d'espacement et de toucher |
+| `ui/theme/Theme.kt` | typographie complète, `dynamicColor=false` |
+| `ui/components/CommonComponents.kt` | `AppTopBar`, `ScreenContent`, `InfoNoticeCard`, `SectionHeader`, `SignalBars`, animation respectueuse du système |
+| `ui/devices/DevicePresentation.kt` | `DeviceSection`, `section()`, `groupRows` |
+| `ui/dashboard/DashboardScreen.kt` | hero combiné, 3 cartes, bandes en liste, info repliable, pont vers liste, `ScreenContent`, previews clair/sombre/1,3× |
+| `ui/devices/DevicesScreen.kt` | groupes, `SignalBars`, chips/tri séparés, `AppTopBar`, identité `primaryContainer`, CTA en tête, sections, previews clair/sombre/1,3× |
+| `ui/login/LoginScreen.kt` | carte d'état, aide sous bouton, champs désactivés pendant la connexion, `AnimatedVisibility` |
+| `ui/settings/SettingsScreen.kt` | `TopAppBar`, zone destructive + confirmation |
+| `navigation/WifiAdminNavHost.kt` | `BottomBar` extraite, `onSeeActives` vers Liste |
+| `Mission11ModernizationTest.kt` | **nouveau** : 7 tests cibles |
+| `docs/screenshots/mission-11/README.md` | **nouveau** : procédure et statut des captures |
+
+**Aucun** changement dans `data/`, `router-core/`, `SessionNavigation`, les ViewModels ou le
+protocole ZLT. Aucun bouton bloquer/débloquer, aucune écriture routeur, aucun filtrage MAC.
+
+### 8.8 Captures avant/après
+
+`docs/screenshots/mission-11/before/` et `.../after/` contiennent pour l'instant le
+`README.md` qui documente la procédure et l'origine démonstration. **Aucun PNG n'est
+prétendu existant sans être déposé.** Les captures instrumentées sont impossibles ici
+(`adb` absent, pas d'émulateur) ; les preuves visuelles sont les Compose Preview avec
+fixtures fictives (`sample-*`, `192.168.1.10`, MAC `aa:bb:…`), dont le cas bi-bande
+`sample-ordinateur`, exportables depuis Android Studio en clair sombre et police 1,3×.
+
+### 8.9 Limites restantes
+
+1. **Instrumentés non rejoués** sans appareil : à relancer (`41 tests`) avant tout merge.
+2. **Police 200 % et 320 dp** : structure prête, validation visuelle à faire sur appareil.
+3. **`System.currentTimeMillis()` en composition** (liste) : inchangé, artefact possible
+   sur captures — à `remember`/horloge injectée si jank observé.
+4. **Aucune capture PNG déposée** : procédure et previews fournis en remplacement.
+
+## 9. Verdict final
+
+- Modernisation **visiblement différente** : hero, groupes, identité tonale, navigation
+  unifiée — pas seulement couleurs et rayons.
+- Fonctionnalités préservées, tests JVM au vert, build debug au vert, scénarios FakeRouter OK.
+- PR #4 mise à jour sur `feature/mission-11`, **sans merge**. PR : https://github.com/Idjibo33/wifi-admin/pull/4

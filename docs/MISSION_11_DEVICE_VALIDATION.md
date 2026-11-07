@@ -85,3 +85,51 @@ Les captures et les tests ci-dessus prouvent le **rendu**. Ils ne prouvent
 pas le comportement du rafraîchissement, qui est couvert par les
 `PollingInvariantsTest` et les tests instrumentés de la Mission 09, ni le
 comportement du routeur réel, qui n'a été jamais contacté pendant la Mission 11.
+
+---
+
+## 6. Complément 07/11/2026 — modernisation profonde, validation sans appareil
+
+> Même branche `feature/mission-11`, PR #4. `adb` est **introuvable** sur cette machine et
+> aucun émulateur n'est disponible : **aucune capture instrumentée n'a été produite ici**,
+> et aucun PNG n'est prétendu existant sans être déposé dans
+> `docs/screenshots/mission-11/before|after/` (qui contient pour l'instant le `README.md`).
+
+### 6.1 Protocole de substitution (Compose Preview + fixtures)
+
+Toutes les données sont **fictives et clairement identifiées** : noms `sample-*`,
+adresses `192.168.1.10`–`13`, MAC `aa:bb:cc:dd:ee:*`, date fixe `1_700_000_000_000L`.
+Le cas bi-bande `sample-ordinateur` (2,4 GHz + 5 GHz) est inclus dans le Dashboard et la
+Liste pour prouver que `band24 + band5` peut dépasser le total sans erreur.
+
+Previews à exporter depuis Android Studio (procédure complète dans
+`docs/screenshots/mission-11/README.md`) :
+
+- Dashboard : clair, sombre, police 1,3× à 360 dp, cache, chargement, erreur.
+- Liste : clair, sombre, police 1,3× à 360 dp en cache, cache, détail, vide.
+- Connexion : clair, sombre.
+- Réglages : clair, sombre.
+
+Vérifications à faire sur export : espacements (uniquement `Space1/2/3/4/6/8`), alignements,
+typographie, absence de débordement à 360 dp et police 1,3×, lisibilité des cartes,
+adaptation aux petits écrans, clair **et** sombre, `dynamicColor=false`.
+
+### 6.2 Vérifications exécutées ici
+
+| Vérification | Résultat |
+|---|---|
+| `./gradlew :router-core:test :poc-cli:test :app:testDebugUnitTest` | **BUILD SUCCESSFUL** (193 + 56 + 309+7 nouveaux, 0 échec) |
+| `./gradlew :app:assembleDebug` | **OK** |
+| `./gradlew :app:assembleDebugAndroidTest` | **OK** (compilation instrumentale) |
+| `python3 tools/fake_router_scenarios.py` | **10/10**, aucune écriture |
+| `python3 tools/fake_router_expiry_scenarios.py` | **3/3**, aucune écriture |
+| Instrumentés sur appareil | **Non rejoués** — `adb` absent, aucun émulateur (référence 06/11 : 41 tests OK sur Pixel 7 Pro) |
+| Audit anonymisation | `tools/anonymise_observation.py` présent ; aucune capture avec adresse privée réelle ; mot de passe jamais saisi |
+
+### 6.3 Points restant à valider sur appareil avant tout merge
+
+1. Relancer les 41 tests instrumentés (`connectedDebugAndroidTest`).
+2. Vérifier l'export des previews clair/sombre 360 dp + police 1,3× dans `docs/screenshots/mission-11/after/`.
+3. TalkBack complet, clavier (recherche, renommage), retour arrière (onglets, sheet, dialogue,
+   déconnexion, expiry) et changement de réseau.
+4. Confirmations : badges WCAG AA inchangés, `liveRegion` inchangés, `testTag` inchangés.

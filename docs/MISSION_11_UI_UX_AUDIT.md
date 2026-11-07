@@ -229,3 +229,33 @@ lecture, liste, fiche, réglages) est acceptable pour une mission de
 | Problèmes critiques identifiés | 4 |
 | Problèmes importants | 10 |
 | Améliorations facultatives | 4 |
+
+---
+
+## 8. Complément 07/11/2026 — modernisation profonde (même PR #4)
+
+Le polissage ci-dessus ne suffisait pas : l'interface restait une collection d'écrans
+fonctionnels empilés. Quatre sous-agents spécialisés ont été lancés en parallèle en
+lecture seule (Product Designer, Android UI Engineer, Design System & accessibilité,
+QA/perf/sécurité) et leurs rapports ont été arbitrés par l'agent principal.
+
+**Constat central.** Hiérarchie trop plate (6 `StatCard` du même poids, carte
+« Filtrage MAC » plus grande que les compteurs), statut des données traité comme détail
+annexe, liste sans groupes, fiche appareil sans identité, navigation sans sous-titre de
+fraîcheur, `dynamicColor = true` qui efface l'identité WiFi Admin sur Android 12+,
+typographie à 7 styles sur 15, espacements sans échelle, icône `Router` pour « Périmés »
+trompeuse.
+
+**Direction arbitrée : « Instrument honnête, sobriété d'atelier ».** Vérité avant
+décoration (statut en premier, aucun chiffre sans provenance), gravité hiérarchique à
+3 niveaux (Statut tonal / Action / Contenu neutre), densité maîtrisée et scan rapide
+(groupes, signal en barres + libellé). Tokens : grille 4 dp (`Space1/2/3/4/6/8`),
+`titleLarge/headlineMedium/displayLarge/labelSmall` ajoutés, `dynamicColor = false`
+par défaut, icônes `Filled` uniquement, aucune catégorie d'appareil inventée.
+
+Les implémentations et les preuves sont détaillées dans `MISSION_11_REPORT.md` §2 (réécrit)
+et `MISSION_11_DEVICE_VALIDATION.md` §6-7. Les captures PNG ne peuvent pas être produites
+ici (`adb` introuvable, aucun émulateur) : ce sont les Compose Preview avec fixtures
+fictives clairement identifiées qui servent de preuves, exportables depuis Android Studio
+(voir `docs/screenshots/mission-11/README.md`). Aucun fichier PNG n'est prétendu existant
+sans être déposé.
