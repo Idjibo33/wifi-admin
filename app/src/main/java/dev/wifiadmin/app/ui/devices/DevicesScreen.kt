@@ -621,7 +621,7 @@ private const val MAX_ALIAS_LENGTH = 64
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DeviceDetailSheet(
+internal fun DeviceDetailSheet(
     row: DeviceRow,
     cached: Boolean,
     capturedAtMillis: Long?,

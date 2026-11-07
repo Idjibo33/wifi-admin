@@ -117,7 +117,7 @@ private fun dashboardSubtitle(state: DashboardUiState): String? {
 
 /** The body of the dashboard: the counters and the explanations. */
 @Composable
-private fun DashboardContent(
+internal fun DashboardContent(
     state: DashboardUiState,
     onSeeActives: (() -> Unit)? = null,
     modifier: Modifier = Modifier

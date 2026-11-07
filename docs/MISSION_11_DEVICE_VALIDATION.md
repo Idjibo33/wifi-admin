@@ -88,14 +88,32 @@ comportement du routeur réel, qui n'a été jamais contacté pendant la Mission
 
 ---
 
-## 6. Complément 07/11/2026 — modernisation profonde, validation sans appareil
+## 6. Complément 07/11/2026 — captures réelles sur Pixel 7 Pro (recapture 18 h)
 
-> Même branche `feature/mission-11`, PR #4. `adb` est **introuvable** sur cette machine et
-> aucun émulateur n'est disponible : **aucune capture instrumentée n'a été produite ici**,
-> et aucun PNG n'est prétendu existant sans être déposé dans
-> `docs/screenshots/mission-11/before|after/` (qui contient pour l'instant le `README.md`).
+> **Pixel retrouvé** : `adb` hors PATH (`/home/ismael/Android/Sdk/platform-tools/adb`),
+> USB `18d1:4ee2` « Nexus/Pixel Device », `Pixel_7_Pro` cheetah `2B091FDH3004DG`,
+> Android 17 (API 37). 26 PNG (13 before sur `1862ecf` + 13 after sur `feature/mission-11`)
+> déposés dans `docs/screenshots/mission-11/before|after/`.
 
-### 6.1 Protocole de substitution (Compose Preview + fixtures)
+### 6.1 Harnais de capture (même code des deux côtés)
+
+Harnais instrumenté `Mission11ScreenshotTest` (13 tests) : `createComposeRule()` +
+`onRoot().captureToImage()`, `DashboardUiState`/`DevicesUiState` construits à la main,
+`LoginViewModel`/`SettingsViewModel` sur stub adapter (aucun routeur, aucun mot de passe).
+`DashboardContent`/`DeviceDetailSheet` : `private` → `internal` (rendu inchangé).
+`WifiAdminTheme(dynamicColor=false)` forcé des deux côtés. Commande :
+
+```sh
+ADB=/home/ismael/Android/Sdk/platform-tools/adb
+$ADB install -r app-debug.apk app-debug-androidTest.apk
+$ADB shell am instrument -w -r \
+  -e class dev.wifiadmin.app.Mission11ScreenshotTest \
+  dev.wifiadmin.app.test/androidx.test.runner.AndroidJUnitRunner
+$ADB pull /sdcard/Android/data/dev.wifiadmin.app/files/mission11_screenshots .
+```
+
+Toutes les données sont **fictives et clairement identifiées** : noms `sample-*`,
+adresses `192.168.1.10`–`13`, MAC `aa:bb:cc:dd:ee:*`, date fixe `1_700_000_000_000L`.
 
 Toutes les données sont **fictives et clairement identifiées** : noms `sample-*`,
 adresses `192.168.1.10`–`13`, MAC `aa:bb:cc:dd:ee:*`, date fixe `1_700_000_000_000L`.
@@ -123,13 +141,24 @@ adaptation aux petits écrans, clair **et** sombre, `dynamicColor=false`.
 | `./gradlew :app:assembleDebugAndroidTest` | **OK** (compilation instrumentale) |
 | `python3 tools/fake_router_scenarios.py` | **10/10**, aucune écriture |
 | `python3 tools/fake_router_expiry_scenarios.py` | **3/3**, aucune écriture |
-| Instrumentés sur appareil | **Non rejoués** — `adb` absent, aucun émulateur (référence 06/11 : 41 tests OK sur Pixel 7 Pro) |
-| Audit anonymisation | `tools/anonymise_observation.py` présent ; aucune capture avec adresse privée réelle ; mot de passe jamais saisi |
+| Instrumentés ciblés sur Pixel 7 Pro | `DevicesListInstrumentedTest` 14 OK, `DeviceAccessibilityInstrumentedTest` 3 OK, `NavigationInstrumentedTest` 3 OK, `SessionExpiryInstrumentedTest` 4 OK, `Mission11ScreenshotTest` 13 OK ; suite complète (54) non lancée d'un bloc — boucles de polling de 30 s, `NetworkChangeInstrumentedTest` seul OK en 78 s |
+| Audit anonymisation | aucune capture avec adresse privée réelle ; mot de passe jamais saisi ; `admin` est le défaut de l'app |
 
-### 6.3 Points restant à valider sur appareil avant tout merge
+### 6.3 Comparaison avant/après vérifiée visuellement
 
-1. Relancer les 41 tests instrumentés (`connectedDebugAndroidTest`).
-2. Vérifier l'export des previews clair/sombre 360 dp + police 1,3× dans `docs/screenshots/mission-11/after/`.
-3. TalkBack complet, clavier (recherche, renommage), retour arrière (onglets, sheet, dialogue,
-   déconnexion, expiry) et changement de réseau.
-4. Confirmations : badges WCAG AA inchangés, `liveRegion` inchangés, `testTag` inchangés.
+- Dashboard sombre : before 6 cartes à égalité + `Dernière lecture 23:13:20` seule +
+  bloc « Filtrage MAC » de ~3 paragraphes ; after hero « 3 actifs sur 4 connus »,
+  3 cartes, bandes en liste avec explication bi-bande, bloc repliable.
+- Liste sombre : before liste plate triée globalement, signal `-62 dBm` seul, chips+tri
+  sur une ligne ; after sections Actifs (3) / Filaires (1), barres + « Signal bon »,
+  chips puis tri.
+- Détail sombre : before MAC/IP/Bandes/Signal/Débits en tête, État au milieu ; after
+  carte identité bleue + « Renommer », sections Statut/Chronologie/Détails.
+- Connexion sombre : avant/après quasi identiques (carte d'état inchangée), fond sombre
+  corrigé en `Surface(background)` dans le harnais.
+
+### 6.4 Reste non prouvé
+
+Suite complète instrumentée d'un bloc, police agrandie 200 % et petits écrans sur
+appareil, TalkBack complet — couverts par les tests JVM/boundary ci-dessus, pas par
+une capture ici.

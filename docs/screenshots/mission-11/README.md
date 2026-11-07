@@ -6,29 +6,32 @@
 > adresse privée réelle, aucune donnée personnelle n'est capturée. Le mot de passe ne doit
 > jamais être saisi dans les champs des captures.
 
-## Statut des captures (7 novembre 2026)
+## Captures réelles sur Pixel 7 Pro (7 novembre 2026, recapture)
 
-- `adb` est introuvable sur cette machine (`which adb` → vide) et aucun émulateur n'est
-  disponible. Les captures instrumentées sur appareil ne peuvent donc pas être produites ici.
-- À la place, les preuves visuelles sont fournies par les **Compose Preview avec fixtures
-  fictives clairement identifiées**, exportables depuis Android Studio :
-  - `DashboardScreen.kt` : `DashboardContentPreview` (clair), `DashboardDarkPreview` (sombre),
-    `DashboardLargeFontPreview` (police 1,3×, 360 dp), `DashboardCachedPreview`, `DashboardLoadingPreview`, `DashboardErrorPreview`
-  - `DevicesScreen.kt` : `DeviceListPreview` (clair), `DeviceListDarkPreview` (sombre),
-    `DeviceListLargeFontPreview` (1,3×, 360 dp, cache), `DeviceListCachedPreview`, `DeviceDetailPreview`, `DeviceEmptyPreview`
-  - `LoginScreen.kt` : `LoginPreview` (clair), `LoginDarkPreview` (sombre)
-  - `SettingsScreen.kt` : `SettingsSectionPreview` (clair), `SettingsDarkPreview` (sombre)
-- Procédure d'export (Android Studio) :
-  1. Ouvrir le fichier, afficher la vue `@Preview`, choisir le thème clair ou sombre,
-     l'échelle de police 1,0 ou 1,3 et la largeur 360 dp.
-  2. Exporter le PNG et le déposer dans `docs/screenshots/mission-11/after/` avec le nom
-     indiqué ci-dessous.
-  3. Pour le « before », exporter les mêmes previews depuis un worktree sur `1862ecf`
-     (Mission 10) et déposer dans `docs/screenshots/mission-11/before/`.
-- **Aucun fichier PNG n'est prétendu existant tant qu'il n'a pas été exporté.**
-  Ce dossier contient pour l'instant uniquement ce README, qui documente l'origine
-  démonstration et la procédure. Les comparaisons avant/après textuelles sont dans
-  `docs/MISSION_11_REPORT.md` §4.
+> Dépôt le 07/11/2026 à 18 h environ, depuis le Pixel 7 Pro cheetah `2B091FDH3004DG`
+> (Android 17, API 37) connecté en USB. ADB : `/home/ismael/Android/Sdk/platform-tools/adb`.
+
+- **Before** = worktree `1862ecf` (Mission 10, `develop`), **after** = branche
+  `feature/mission-11` (`0af77ee` + harnais + visibilité `internal`). Mêmes fixtures,
+  même harnais, même appareil, thème forcé `WifiAdminTheme(darkTheme, dynamicColor=false)`.
+- Rendu par test instrumenté `Mission11ScreenshotTest` (`app/src/androidTest/...`) via
+  `createComposeRule()` + `onRoot().captureToImage()`, état construit à la main, **aucun
+  routeur contacté** (stub adapter `connect=true`, `fetchDevices` jamais appelé par les
+  composables capturés). Seuls `DashboardContent`/`DeviceDetailSheet` sont passés de
+  `private` à `internal` pour ce harnais ; comportement inchangé.
+- Chaque dossier contient **13 PNG** (vérifiés lisibles, `route check` manuelle) :
+  `01-login-clair/sombre`, `02-dashboard-clair/sombre`, `02-dashboard-cache-sombre`,
+  `03-liste-clair/sombre`, `04-details-clair/sombre`, `05-recherche-filtres-sombre`,
+  `06-renommage-sombre`, `07-etat-cache-sombre`, `08-settings-sombre`.
+  Thème clair **et** sombre vérifiés sur les écrans principaux ; états secondaires en
+  sombre pour l'espace. Les previews `@Preview` restent disponibles en complément.
+- Comparaison visuelle immédiate : avant, 6 cartes égales + bloc « Filtrage MAC » intégral ;
+  après, hero bleu « 3 actifs sur 4 connus », 3 cartes, bandes en liste, bloc repliable.
+  Liste avant : liste plate, signal numérique seul ; après : sections Actifs/Filaires,
+  barres de signal + libellé. Détail avant : MAC d'abord, État en bas ; après : carte
+  identité bleue, « Renommer », sections Statut/Chronologie/Détails.
+- Aucun mot de passe saisi, aucune donnée réelle : voir encadré en haut. Le `192.168.1.x`
+  et `aa:bb:…` sont des fixtures fictives communes aux deux versions, pas un réseau réel.
 
 ## Noms de fichiers attendus
 
