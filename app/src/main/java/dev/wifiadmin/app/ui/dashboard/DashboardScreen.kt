@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -82,7 +83,8 @@ fun DashboardScreen(
                 actions = {
                     IconButton(
                         onClick = viewModel::refresh,
-                        enabled = !state.isRefreshing
+                        enabled = !state.isRefreshing,
+                        modifier = Modifier.heightIn(min = 48.dp)
                     ) {
                         if (state.isRefreshing) {
                             CircularProgressIndicator(
@@ -171,7 +173,7 @@ private fun DashboardContent(
                         accent = true
                     )
                     StatCard(
-                        label = if (state.isFromCache) "Wi-Fi (lecture)" else "Wi-Fi actif",
+                        label = if (state.isFromCache) "Wi-Fi (lecture)" else "Appareils actifs",
                         value = active.toString(),
                         icon = Icons.Default.Wifi,
                         modifier = Modifier.weight(1f)
@@ -185,23 +187,32 @@ private fun DashboardContent(
                         modifier = Modifier.weight(1f)
                     )
                     StatCard(
+                        label = "Périmés",
+                        value = (snapshot?.staleCount ?: 0).toString(),
+                        icon = Icons.Default.Router,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                // The band counts overlap on purpose: a device attached to
+                // both radios is counted in each band. They are therefore
+                // grouped under their own heading and are not to be added
+                // to the total.
+                Text(
+                    text = "Associations par bande — un appareil bi-bande est compté dans les deux",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard(
                         label = "2,4 GHz",
                         value = state.band24Count.toString(),
                         icon = Icons.Default.Wifi,
                         modifier = Modifier.weight(1f)
                     )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatCard(
                         label = "5 GHz",
                         value = state.band5Count.toString(),
                         icon = Icons.Default.Wifi,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatCard(
-                        label = "Périmés",
-                        value = (snapshot?.staleCount ?: 0).toString(),
-                        icon = Icons.Default.Router,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -212,7 +223,7 @@ private fun DashboardContent(
             val formatted = formatLastRefresh(state.lastRefreshMillis)
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
             ) {
                 Row(
@@ -224,7 +235,8 @@ private fun DashboardContent(
                     Text(
                         text = "Dernière lecture",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(

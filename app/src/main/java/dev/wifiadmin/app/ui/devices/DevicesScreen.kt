@@ -54,6 +54,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -74,6 +76,7 @@ import dev.wifiadmin.app.ui.components.explanation
 import dev.wifiadmin.app.ui.components.formatLastSeen
 import dev.wifiadmin.app.ui.components.formatSnapshotDate
 import dev.wifiadmin.app.ui.components.label
+import dev.wifiadmin.app.ui.components.signalQualityLabel
 import dev.wifiadmin.app.ui.theme.WifiAdminTheme
 import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.DeviceSignal
@@ -116,7 +119,8 @@ fun DevicesScreen(
                 actions = {
                     IconButton(
                         onClick = viewModel::refresh,
-                        enabled = !state.isLoading
+                        enabled = !state.isLoading,
+                        modifier = Modifier.heightIn(min = 48.dp)
                     ) {
                         if (state.isLoading && state.devices.isNotEmpty()) {
                             CircularProgressIndicator(
@@ -252,7 +256,9 @@ fun DeviceList(
                 if (state.query.isNotEmpty()) {
                     IconButton(
                         onClick = { onQueryChange("") },
-                        modifier = Modifier.testTag("devices_clear_search")
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("devices_clear_search")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
@@ -406,7 +412,7 @@ private fun DeviceCard(
             .fillMaxWidth()
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         )
     ) {
         Row(
@@ -495,7 +501,10 @@ private fun DeviceCard(
                 Text(
                     text = "$rssi dBm",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.semantics {
+                        stateDescription = signalQualityLabel(rssi)
+                    }
                 )
                 Spacer(Modifier.width(8.dp))
             }
@@ -505,20 +514,31 @@ private fun DeviceCard(
     }
 }
 
-/** A small coloured chip showing the presence of a device. */
+/**
+ * A small coloured chip showing the presence of a device.
+ *
+ * The wording is read by a screen reader, not only by the eye: the label
+ * carries a state description so the presence is not conveyed by colour
+ * alone. The minimum height keeps the chip readable at large font scales.
+ */
 @Composable
 private fun PresenceBadge(
     presence: DevicePresence,
     cached: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val text = if (cached) presence.cachedLabel() else presence.label()
     Surface(
-        modifier = modifier,
+        modifier = modifier
+            .heightIn(min = 24.dp)
+            .semantics {
+                stateDescription = text
+            },
         shape = RoundedCornerShape(50),
         color = if (cached) presence.cachedBadgeColor() else presence.badgeColor()
     ) {
         Text(
-            text = if (cached) presence.cachedLabel() else presence.label(),
+            text = text,
             style = MaterialTheme.typography.labelMedium,
             color = androidx.compose.ui.graphics.Color.White,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -638,7 +658,9 @@ private fun DeviceDetailSheet(
 
             IconButton(
                 onClick = onRename,
-                modifier = Modifier.testTag("device_detail_rename_button")
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("device_detail_rename_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Edit,
@@ -671,6 +693,18 @@ private fun DeviceDetailSheet(
 
         Spacer(Modifier.height(4.dp))
 
+        DetailRow(label = "État", value = if (cached) {
+            device.presence.cachedLabel()
+        } else {
+            device.presence.label()
+        }, modifier = Modifier.testTag("device_detail_state"))
+
+        Text(
+            text = device.presence.explanation(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         DetailRow(label = "MAC", value = device.mac)
         DetailRow(label = "Adresse IP", value = device.ip)
 
@@ -685,7 +719,10 @@ private fun DeviceDetailSheet(
         }
 
         device.signal?.rssiDbm?.let {
-            DetailRow(label = "Signal", value = "$it dBm")
+            DetailRow(
+                label = "Signal",
+                value = "$it dBm — ${signalQualityLabel(it)}"
+            )
         }
 
         device.signal?.txRateMbps?.takeIf { it.isNotBlank() }?.let {
@@ -707,18 +744,6 @@ private fun DeviceDetailSheet(
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
-
-        DetailRow(
-            label = if (cached) "État à la lecture" else "État",
-            value = if (cached) device.presence.cachedLabel() else device.presence.label(),
-            modifier = Modifier.testTag("device_detail_state")
-        )
-
-        Text(
-            text = device.presence.explanation(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
 
         // The last confirmed observation. The application never pretends to
         // know the moment of the disconnection: it only knows the last read

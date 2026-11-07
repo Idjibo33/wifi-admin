@@ -40,6 +40,14 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = Color(0xFF41474D),
     outline = Color(0xFF71787E),
     outlineVariant = Color(0xFFC1C7CE),
+    // Material 3 surface containers: the card colours the app has always
+    // used, now expressed as real roles instead of an alpha on
+    // `surfaceVariant`.
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF0F4FA),
+    surfaceContainer = Color(0xFFEAEEF4),
+    surfaceContainerHigh = Color(0xFFE3E9F1),
+    surfaceContainerHighest = Color(0xFFDDE3EA),
 )
 
 private val DarkColors = darkColorScheme(
@@ -67,6 +75,14 @@ private val DarkColors = darkColorScheme(
     onSurfaceVariant = Color(0xFFC1C7CE),
     outline = Color(0xFF8B9198),
     outlineVariant = Color(0xFF41474D),
+    // Material 3 surface containers: the card colours the app has always
+    // used, now expressed as real roles instead of an alpha on
+    // `surfaceVariant`.
+    surfaceContainerLowest = Color(0xFF0B0E10),
+    surfaceContainerLow = Color(0xFF191C1F),
+    surfaceContainer = Color(0xFF1C1F22),
+    surfaceContainerHigh = Color(0xFF26292D),
+    surfaceContainerHighest = Color(0xFF303336),
 )
 
 private val AppTypography = Typography(

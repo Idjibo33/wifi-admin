@@ -27,8 +27,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+
+/**
+ * The description a screen reader gives of a statistic card.
+ *
+ * A card that only says "3" says nothing: the label and the value are
+ * combined so the counter is announced with its unit.
+ */
+fun statCardDescription(label: String, value: String): String = "$label : $value"
 
 /**
  * A compact statistic card.
@@ -45,12 +54,15 @@ fun StatCard(
     accent: Boolean = false
 ) {
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .semantics {
+                stateDescription = statCardDescription(label, value)
+            },
         colors = CardDefaults.cardColors(
             containerColor = if (accent) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                MaterialTheme.colorScheme.surfaceContainerHigh
             }
         )
     ) {
@@ -121,7 +133,10 @@ fun ErrorState(
     onRetry: (() -> Unit)? = null
 ) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(32.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(32.dp)
+            .semantics { liveRegion = LiveRegionMode.Assertive },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -159,7 +174,10 @@ fun EmptyState(
     modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(32.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(32.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -251,12 +269,14 @@ fun DetailRow(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(120.dp)
+            modifier = Modifier.weight(0.45f)
         )
+        Spacer(Modifier.width(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(0.55f)
         )
     }
 }
