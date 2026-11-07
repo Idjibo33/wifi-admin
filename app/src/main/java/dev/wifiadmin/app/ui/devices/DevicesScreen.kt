@@ -1,5 +1,6 @@
 package dev.wifiadmin.app.ui.devices
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,11 +30,11 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,7 +46,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -62,12 +64,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.ui.components.AppTopBar
 import dev.wifiadmin.app.ui.components.CachedDataBanner
 import dev.wifiadmin.app.ui.components.DetailRow
 import dev.wifiadmin.app.ui.components.EmptyState
 import dev.wifiadmin.app.ui.components.ErrorState
 import dev.wifiadmin.app.ui.components.LoadingState
 import dev.wifiadmin.app.ui.components.NEVER_SEEN_MESSAGE
+import dev.wifiadmin.app.ui.components.ScreenContent
+import dev.wifiadmin.app.ui.components.SectionHeader
+import dev.wifiadmin.app.ui.components.SignalBars
 import dev.wifiadmin.app.ui.components.badgeColor
 import dev.wifiadmin.app.ui.components.cachedBadgeColor
 import dev.wifiadmin.app.ui.components.cachedLabel
@@ -78,6 +84,7 @@ import dev.wifiadmin.app.ui.components.formatSnapshotDate
 import dev.wifiadmin.app.ui.components.label
 import dev.wifiadmin.app.ui.components.signalQualityLabel
 import dev.wifiadmin.app.ui.theme.WifiAdminTheme
+import dev.wifiadmin.app.ui.theme.WifiDims
 import dev.wifiadmin.router.DevicePresence
 import dev.wifiadmin.router.DeviceSignal
 import dev.wifiadmin.router.RouterDevice
@@ -89,6 +96,10 @@ import dev.wifiadmin.router.WifiBand
  * The list can be narrowed with a free-text search and with a filter on the
  * band. Both are applied to the devices the router reported during the last
  * poll; the filtering is **purely local** and never triggers a read.
+ *
+ * Devices are grouped after filtering and sorting into Actifs / Filaires /
+ * Vus précédemment, so the active device can be found in one glance. The
+ * grouping preserves the sorted order inside each section.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,41 +111,22 @@ fun DevicesScreen(
     var selectedRow by remember { mutableStateOf<DeviceRow?>(null) }
     var renamingRow by remember { mutableStateOf<DeviceRow?>(null) }
 
-    // The refresh follows the visibility of the screen: it runs while the
-    // screen is in the foreground and stops as soon as it is not.
-    //
-    // The block is keyed on `Unit`: a recomposition never restarts it, and
-    // `onStopOrDispose` is called on every exit from the STARTED state and
-    // when the screen leaves the composition.
     LifecycleStartEffect(Unit) {
         viewModel.startPolling()
         onStopOrDispose { viewModel.stopPolling() }
     }
 
+    val subtitle = devicesSubtitle(state)
+
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Appareils") },
-                actions = {
-                    IconButton(
-                        onClick = viewModel::refresh,
-                        enabled = !state.isLoading,
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    ) {
-                        if (state.isLoading && state.devices.isNotEmpty()) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Actualiser"
-                            )
-                        }
-                    }
-                }
+            AppTopBar(
+                title = "Appareils",
+                subtitle = subtitle,
+                isRefreshing = false,
+                isLoadingWithData = state.isLoading && state.devices.isNotEmpty(),
+                onRefresh = viewModel::refresh
             )
         }
     ) { innerPadding ->
@@ -143,21 +135,14 @@ fun DevicesScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when {
-                state.isFirstLoad -> LoadingState(
-                    message = "Connexion au routeur…",
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                state.isFatalError -> ErrorState(
-                    title = "Lecture impossible",
-                    message = state.errorMessage
-                        ?: "Le routeur n'a pas répondu.",
-                    modifier = Modifier.fillMaxSize(),
-                    onRetry = viewModel::refresh
-                )
-
-                else -> DeviceList(
+            ScreenContent(
+                isFirstLoad = state.isFirstLoad,
+                isFatalError = state.isFatalError,
+                onRetry = viewModel::refresh,
+                errorMessage = state.errorMessage,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                DeviceList(
                     state = state,
                     onQueryChange = viewModel::setQuery,
                     onFilterChange = viewModel::setFilter,
@@ -205,6 +190,14 @@ fun DevicesScreen(
     }
 }
 
+private fun devicesSubtitle(state: DevicesUiState): String? {
+    if (!state.hasSnapshot) return null
+    val date = formatSnapshotDate(state.lastRefreshMillis)
+    val mode = if (state.isFromCache) "en cache" else "en direct"
+    val count = state.devices.size
+    return if (date != null) "$count appareils · $date · $mode" else "$count appareils · $mode"
+}
+
 /**
  * The search field, the filters, the sort menu and the list of devices.
  *
@@ -224,14 +217,13 @@ fun DeviceList(
     modifier: Modifier = Modifier
 ) {
     val rows = state.filteredRows
-    // The current time is read once for the whole list: every card shows
-    // the same moment.
+    val groups = groupRows(rows)
     val nowMillis = System.currentTimeMillis()
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = WifiDims.Space4)
     ) {
         if (state.hasStaleData) {
             state.staleDataReason?.let { reason ->
@@ -241,54 +233,49 @@ fun DeviceList(
                     detail = state.errorMessage
                 )
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(WifiDims.Space2))
         }
 
-        OutlinedTextField(
-            value = state.query,
-            onValueChange = onQueryChange,
-            label = { Text("Rechercher un appareil") },
-            singleLine = true,
-            leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = null)
-            },
-            trailingIcon = {
-                if (state.query.isNotEmpty()) {
-                    IconButton(
-                        onClick = { onQueryChange("") },
-                        modifier = Modifier
-                            .heightIn(min = 48.dp)
-                            .testTag("devices_clear_search")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Effacer la recherche"
-                        )
+        Column(modifier = Modifier.imePadding()) {
+            OutlinedTextField(
+                value = state.query,
+                onValueChange = onQueryChange,
+                label = { Text("Rechercher un appareil") },
+                placeholder = { Text("Nom, adresse IP ou MAC") },
+                singleLine = true,
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                },
+                trailingIcon = {
+                    if (state.query.isNotEmpty()) {
+                        IconButton(
+                            onClick = { onQueryChange("") },
+                            modifier = Modifier
+                                .heightIn(min = WifiDims.TouchMin)
+                                .testTag("devices_clear_search")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Effacer la recherche"
+                            )
+                        }
                     }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("devices_search_field")
-        )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("devices_search_field")
+            )
 
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(WifiDims.Space2))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // A lazy row: the four chips do not always fit on a narrow
-            // screen, and a lazy row only composes the visible ones. Its
-            // height is explicit: a lazy layout measures itself, and
-            // without a height it would take none and leave the list
-            // without any room.
+            // Chips on one line, sort on the next: on a small phone the sort
+            // must never push the chips off-screen.
             LazyRow(
                 modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(end = 8.dp)
+                    .fillMaxWidth()
+                    .heightIn(min = WifiDims.TouchMin),
+                horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                contentPadding = PaddingValues(end = WifiDims.Space2)
             ) {
                 items(DeviceBandFilter.entries) { filter ->
                     FilterChip(
@@ -296,16 +283,21 @@ fun DeviceList(
                         onClick = { onFilterChange(filter) },
                         label = { Text(filter.label) },
                         modifier = Modifier
-                            .heightIn(min = 48.dp)
+                            .heightIn(min = WifiDims.TouchMin)
                             .testTag("filter_${filter.name}")
                     )
                 }
             }
 
-            SortMenu(sort = state.sort, onSortChange = onSortChange)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                SortMenu(sort = state.sort, onSortChange = onSortChange)
+            }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(WifiDims.Space2))
 
         when {
             rows.isEmpty() -> {
@@ -325,20 +317,26 @@ fun DeviceList(
             }
 
             else -> LazyColumn(
-                // The list takes the space the fixed part of the column
-                // leaves. A `fillMaxSize` would ask for the whole height of
-                // an unbounded parent and end up with no visible item.
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(top = WifiDims.Space1, bottom = WifiDims.Space6),
+                verticalArrangement = Arrangement.spacedBy(WifiDims.Space2)
             ) {
-                items(items = rows, key = { it.key ?: "pos:${it.device.ip}|${it.device.mac}" }) { row ->
-                    DeviceCard(
-                        row = row,
-                        cached = state.isFromCache,
-                        nowMillis = nowMillis,
-                        onClick = { onDeviceClick(row) }
-                    )
+                groups.forEach { (section, sectionRows) ->
+                    item(key = "header-${section.name}", contentType = "header") {
+                        SectionHeader(title = section.title, count = sectionRows.size)
+                    }
+                    items(
+                        items = sectionRows,
+                        key = { it.key ?: "pos:${it.device.ip}|${it.device.mac}" },
+                        contentType = { "device" }
+                    ) { row ->
+                        DeviceCard(
+                            row = row,
+                            cached = state.isFromCache,
+                            nowMillis = nowMillis,
+                            onClick = { onDeviceClick(row) }
+                        )
+                    }
                 }
             }
         }
@@ -364,9 +362,11 @@ private fun SortMenu(
         TextButton(
             onClick = { expanded = true },
             modifier = Modifier
-                .heightIn(min = 48.dp)
+                .heightIn(min = WifiDims.TouchMin)
                 .testTag("devices_sort_button")
         ) {
+            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(WifiDims.Space1))
             Text("Trier : ${sort.label}")
         }
 
@@ -403,8 +403,6 @@ private fun DeviceCard(
 ) {
     val device = row.device
     val rssi = row.rssiDbm
-    // The signal only exists for a radio association: a wired device has
-    // none, and must not be given a placeholder value.
     val showSignal = rssi != null && device.presence == DevicePresence.ACTIVE
 
     Card(
@@ -418,15 +416,12 @@ private fun DeviceCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(horizontal = WifiDims.Space4, vertical = WifiDims.CardPaddingV),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    // The card merges the semantics of its children, so the
-                    // tag of a device goes on the column that holds its
-                    // name: it survives the merge.
                     .testTag("device_card_${row.key.orEmpty()}"),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
@@ -443,8 +438,6 @@ private fun DeviceCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                // The router's name stays visible: the user must be able to
-                // tell which device it really is.
                 row.originalName?.let { original ->
                     Text(
                         text = "Router : $original",
@@ -467,24 +460,16 @@ private fun DeviceCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                // The last observation is only shown for a device that is
-                // not there any more: for a connected one, the presence
-                // badge already says it.
                 if (device.presence != DevicePresence.ACTIVE &&
                     device.presence != DevicePresence.CABLED
                 ) {
                     row.lastSeenMillis?.let { lastSeen ->
-                        // "Vu récemment" is a **bound**: the device was there
-                        // at least that long ago. The date is the fact, and
-                        // it is shown with it.
                         val relative = formatLastSeen(lastSeen, nowMillis)
                         Text(
                             text = if (relative != null) {
-                                "$relative — dernière observation : " +
-                                    (formatSnapshotDate(lastSeen) ?: "")
+                                "$relative — ${formatSnapshotDate(lastSeen) ?: ""}"
                             } else {
-                                "Dernière observation : " +
-                                    (formatSnapshotDate(lastSeen) ?: "")
+                                "Dernière observation : ${formatSnapshotDate(lastSeen) ?: ""}"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -495,18 +480,29 @@ private fun DeviceCard(
                 }
             }
 
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(WifiDims.Space2))
 
             if (showSignal) {
-                Text(
-                    text = "$rssi dBm",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.semantics {
-                        stateDescription = signalQualityLabel(rssi)
-                    }
-                )
-                Spacer(Modifier.width(8.dp))
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    SignalBars(rssiDbm = rssi)
+                    Text(
+                        text = "$rssi dBm",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.semantics {
+                            stateDescription = signalQualityLabel(rssi)
+                        }
+                    )
+                    Text(
+                        text = signalQualityLabel(rssi),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(WifiDims.Space2))
             }
 
             PresenceBadge(presence = device.presence, cached = cached)
@@ -530,7 +526,7 @@ private fun PresenceBadge(
     val text = if (cached) presence.cachedLabel() else presence.label()
     Surface(
         modifier = modifier
-            .heightIn(min = 24.dp)
+            .heightIn(min = WifiDims.BadgeMinH)
             .semantics {
                 stateDescription = text
             },
@@ -540,8 +536,8 @@ private fun PresenceBadge(
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = androidx.compose.ui.graphics.Color.White,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = WifiDims.BadgePaddingH, vertical = WifiDims.BadgePaddingV)
         )
     }
 }
@@ -562,8 +558,6 @@ fun RenameDeviceDialog(
 ) {
     var value by remember { mutableStateOf(initialName.orEmpty()) }
 
-    // A blank name is not an error: the button stays disabled and no message
-    // is shown. The user simply has not finished typing.
     val trimmed = value.trim()
     val canSave = trimmed.isNotEmpty() && trimmed != initialName?.trim()
 
@@ -572,7 +566,7 @@ fun RenameDeviceDialog(
         modifier = modifier.testTag("rename_dialog"),
         title = { Text("Renommer l'appareil") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(WifiDims.Space3)) {
                 if (originalName != null) {
                     Text(
                         text = "Le nom du routeur reste inchangé : « $originalName ».",
@@ -587,7 +581,8 @@ fun RenameDeviceDialog(
                     placeholder = { Text("ex. Téléphone de Marie") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                        autoCorrectEnabled = false
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -624,6 +619,7 @@ private const val MAX_ALIAS_LENGTH = 64
  * The fields the router did not report are simply left out: showing a dash
  * would suggest the router answered something it did not.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DeviceDetailSheet(
     row: DeviceRow,
@@ -634,65 +630,105 @@ private fun DeviceDetailSheet(
     modifier: Modifier = Modifier
 ) {
     val device = row.device
+    var detailsExpanded by remember { mutableStateOf(true) }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(max = 520.dp)
             .verticalScroll(rememberScrollState())
-            .padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(start = WifiDims.Space6, end = WifiDims.Space6, bottom = WifiDims.Space8),
+        verticalArrangement = Arrangement.spacedBy(WifiDims.Space1)
     ) {
-        Row(
+        // Identity card: the four identifying pieces, on a tonal surface.
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = row.displayName,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("device_detail_name")
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
             )
-
-            IconButton(
-                onClick = onRename,
+        ) {
+            Column(
                 modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .testTag("device_detail_rename_button")
+                    .fillMaxWidth()
+                    .padding(WifiDims.Space4),
+                verticalArrangement = Arrangement.spacedBy(WifiDims.Space2)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = "Renommer l'appareil"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = row.displayName,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("device_detail_name")
+                    )
+                    PresenceBadge(presence = device.presence, cached = cached)
+                }
+                if (row.originalName != null) {
+                    Text(
+                        text = "Nom du routeur : ${row.originalName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.testTag("device_detail_original_name")
+                    )
+                } else if (device.name.isNotBlank()) {
+                    Text(
+                        text = "Nom du routeur : ${device.name}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.testTag("device_detail_original_name")
+                    )
+                }
+                Text(
+                    text = buildString {
+                        append(device.ip)
+                        append(" · ")
+                        append(device.bands.label())
+                        device.signal?.rssiDbm?.let {
+                            append(" · $it dBm — ${signalQualityLabel(it)}")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
         }
 
-        row.originalName?.let { original ->
-            Text(
-                text = "Nom du routeur : $original",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("device_detail_original_name")
-            )
+        Spacer(Modifier.height(WifiDims.Space2))
+
+        // Two actions up front: rename is the primary gesture, removing the
+        // alias is secondary but no longer at the bottom of the scroll.
+        Row(horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
+            FilledTonalButton(
+                onClick = onRename,
+                modifier = Modifier
+                    .heightIn(min = WifiDims.TouchMin)
+                    .testTag("device_detail_rename_button")
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(WifiDims.Space2))
+                Text("Renommer")
+            }
+            if (row.hasCustomName) {
+                TextButton(
+                    onClick = onRemoveName,
+                    modifier = Modifier
+                        .heightIn(min = WifiDims.TouchMin)
+                        .testTag("device_detail_remove_alias_button")
+                ) {
+                    Text(
+                        text = "Retirer le surnom",
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
         }
 
-        if (cached) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = formatSnapshotDate(capturedAtMillis)?.let { date ->
-                    "Données enregistrées le $date. Cet appareil n'est pas " +
-                        "nécessairement connecté maintenant."
-                } ?: "Données enregistrées. Cet appareil n'est pas " +
-                    "nécessairement connecté maintenant.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onTertiaryContainer
-            )
-        }
-
-        Spacer(Modifier.height(4.dp))
-
+        Text(
+            text = "Statut",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = WifiDims.Space3)
+        )
         DetailRow(label = "État", value = if (cached) {
             device.presence.cachedLabel()
         } else {
@@ -705,61 +741,29 @@ private fun DeviceDetailSheet(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        DetailRow(label = "MAC", value = device.mac)
-        DetailRow(label = "Adresse IP", value = device.ip)
-
-        device.ipv6?.takeIf { it.isNotBlank() }?.let {
-            DetailRow(label = "IPv6", value = it)
-        }
-
-        DetailRow(label = "Bandes", value = device.bands.label())
-
-        device.signal?.ssid?.takeIf { it.isNotBlank() }?.let {
-            DetailRow(label = "Réseau", value = it)
-        }
-
-        device.signal?.rssiDbm?.let {
-            DetailRow(
-                label = "Signal",
-                value = "$it dBm — ${signalQualityLabel(it)}"
+        if (cached) {
+            Text(
+                text = formatSnapshotDate(capturedAtMillis)?.let { date ->
+                    "Données enregistrées le $date. Cet appareil n'est pas " +
+                        "nécessairement connecté maintenant."
+                } ?: "Données enregistrées. Cet appareil n'est pas " +
+                    "nécessairement connecté maintenant.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        device.signal?.txRateMbps?.takeIf { it.isNotBlank() }?.let {
-            DetailRow(label = "Débit envoi", value = "$it Mbit/s")
-        }
-
-        device.signal?.rxRateMbps?.takeIf { it.isNotBlank() }?.let {
-            DetailRow(label = "Débit réception", value = "$it Mbit/s")
-        }
-
-        device.interfaceName.takeIf { it.isNotBlank() }?.let {
-            DetailRow(label = "Interface", value = it)
-        }
-
-        device.leaseExpiry?.takeIf { it.isNotBlank() }?.let {
-            DetailRow(label = "Bail DHCP", value = it)
-        }
-
-        Spacer(Modifier.height(8.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-
-        // The last confirmed observation. The application never pretends to
-        // know the moment of the disconnection: it only knows the last read
-        // that saw the device.
-        Spacer(Modifier.height(8.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-
+        Text(
+            text = "Chronologie",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = WifiDims.Space3)
+        )
         val lastSeen = row.lastSeenMillis
         DetailRow(
             label = "Dernière observation connue",
             value = if (lastSeen == null) {
                 NEVER_SEEN_MESSAGE
             } else {
-                // The relative wording and the date: the date is the fact,
-                // the relative wording is the convenience.
                 val date = formatSnapshotDate(lastSeen) ?: ""
                 val relative = formatLastSeen(lastSeen, System.currentTimeMillis())
                 if (relative != null) "$relative — $date" else date
@@ -775,23 +779,61 @@ private fun DeviceDetailSheet(
             )
         }
 
-        if (row.hasCustomName) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(
-                onClick = onRemoveName,
-                modifier = Modifier.testTag("device_detail_remove_alias_button")
-            ) {
-                Text(
-                    text = "Supprimer le nom personnalisé",
-                    color = MaterialTheme.colorScheme.error
-                )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Détails techniques",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f).padding(top = WifiDims.Space3)
+            )
+            TextButton(onClick = { detailsExpanded = !detailsExpanded }) {
+                Text(if (detailsExpanded) "Réduire" else "Voir tout")
+            }
+        }
+
+        AnimatedVisibility(visible = detailsExpanded) {
+            Column {
+                DetailRow(label = "MAC", value = device.mac)
+                DetailRow(label = "Adresse IP", value = device.ip)
+
+                device.ipv6?.takeIf { it.isNotBlank() }?.let {
+                    DetailRow(label = "IPv6", value = it)
+                }
+
+                DetailRow(label = "Bandes", value = device.bands.label())
+
+                device.signal?.ssid?.takeIf { it.isNotBlank() }?.let {
+                    DetailRow(label = "Réseau", value = it)
+                }
+
+                device.signal?.rssiDbm?.let {
+                    DetailRow(
+                        label = "Signal",
+                        value = "$it dBm — ${signalQualityLabel(it)}"
+                    )
+                }
+
+                device.signal?.txRateMbps?.takeIf { it.isNotBlank() }?.let {
+                    DetailRow(label = "Débit envoi", value = "$it Mbit/s")
+                }
+
+                device.signal?.rxRateMbps?.takeIf { it.isNotBlank() }?.let {
+                    DetailRow(label = "Débit réception", value = "$it Mbit/s")
+                }
+
+                device.interfaceName.takeIf { it.isNotBlank() }?.let {
+                    DetailRow(label = "Interface", value = it)
+                }
+
+                device.leaseExpiry?.takeIf { it.isNotBlank() }?.let {
+                    DetailRow(label = "Bail DHCP", value = it)
+                }
             }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Previews — the data below is fictional and only serves the preview.
+// Previews — fictional data, clearly labelled as demonstration.
 // ---------------------------------------------------------------------------
 
 /** Fictional sample devices, used only by the previews. */
@@ -831,10 +873,10 @@ private val sampleDevices = listOf(
     )
 )
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, name = "Liste — clair")
 @Composable
 private fun DeviceListPreview() {
-    WifiAdminTheme {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
         DeviceList(
             state = DevicesUiState(
                 isLoading = false,
@@ -855,10 +897,60 @@ private fun DeviceListPreview() {
     }
 }
 
+@Preview(showBackground = true, name = "Liste — sombre")
+@Composable
+private fun DeviceListDarkPreview() {
+    WifiAdminTheme(darkTheme = true, dynamicColor = false) {
+        DeviceList(
+            state = DevicesUiState(
+                isLoading = false,
+                devices = sampleDevices,
+                query = "",
+                filter = DeviceBandFilter.ALL,
+                sort = DeviceSort.NAME,
+                lastRefreshMillis = null,
+                errorMessage = null
+            ),
+            onQueryChange = {},
+            onFilterChange = {},
+            onSortChange = {},
+            onDeviceClick = {},
+            onRenameClick = {},
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Preview(showBackground = true, fontScale = 1.3f, widthDp = 360)
+@Composable
+private fun DeviceListLargeFontPreview() {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
+        DeviceList(
+            state = DevicesUiState(
+                isLoading = false,
+                devices = sampleDevices,
+                query = "",
+                filter = DeviceBandFilter.ALL,
+                sort = DeviceSort.NAME,
+                lastRefreshMillis = 1_700_000_000_000L,
+                errorMessage = null,
+                isFromCache = true,
+                hasSnapshot = true
+            ),
+            onQueryChange = {},
+            onFilterChange = {},
+            onSortChange = {},
+            onDeviceClick = {},
+            onRenameClick = {},
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
 @Preview(showBackground = true)
 @Composable
 private fun DeviceListCachedPreview() {
-    WifiAdminTheme {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
         DeviceList(
             state = DevicesUiState(
                 isLoading = false,
@@ -884,7 +976,7 @@ private fun DeviceListCachedPreview() {
 @Preview(showBackground = true)
 @Composable
 private fun DeviceDetailPreview() {
-    WifiAdminTheme {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
         DeviceDetailSheet(
             row = DeviceRow(sampleDevices.first(), null),
             cached = false,
@@ -898,7 +990,7 @@ private fun DeviceDetailPreview() {
 @Preview(showBackground = true)
 @Composable
 private fun DeviceEmptyPreview() {
-    WifiAdminTheme {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
         EmptyState(
             message = "Aucun appareil ne correspond à « poste ».",
             modifier = Modifier.fillMaxSize()

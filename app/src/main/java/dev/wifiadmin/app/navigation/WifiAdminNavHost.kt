@@ -110,26 +110,18 @@ fun WifiAdminNavHost(
         modifier = modifier,
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
-                    Tab.entries.forEach { tab ->
-                        val selected = currentDestination?.hierarchy
-                            ?.any { it.route == tab.route.path } == true
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(tab.route.path) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label) }
-                        )
+                BottomBar(
+                    currentRoute = currentDestination?.hierarchy?.firstOrNull()?.route,
+                    onTabClick = { tab ->
+                        navController.navigate(tab.route.path) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
-                }
+                )
             }
         }
     ) { innerPadding ->
@@ -151,7 +143,18 @@ fun WifiAdminNavHost(
             }
             composable(Route.Dashboard.path) {
                 val viewModel: DashboardViewModel = viewModel(factory = viewModelFactory)
-                DashboardScreen(viewModel = viewModel)
+                DashboardScreen(
+                    viewModel = viewModel,
+                    onSeeActives = {
+                        navController.navigate(Route.Devices.path) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                )
             }
             composable(Route.Devices.path) {
                 val viewModel: DevicesViewModel = viewModel(factory = viewModelFactory)
@@ -170,6 +173,26 @@ fun WifiAdminNavHost(
                     }
                 )
             }
+        }
+    }
+}
+
+/** The shared bottom bar: same behaviour, extracted so it can be previewed. */
+@Composable
+private fun BottomBar(
+    currentRoute: String?,
+    onTabClick: (Tab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    NavigationBar(modifier = modifier) {
+        Tab.entries.forEach { tab ->
+            val selected = currentRoute == tab.route.path
+            NavigationBarItem(
+                selected = selected,
+                onClick = { onTabClick(tab) },
+                icon = { Icon(tab.icon, contentDescription = null) },
+                label = { Text(tab.label) }
+            )
         }
     }
 }
