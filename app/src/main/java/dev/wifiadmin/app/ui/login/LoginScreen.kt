@@ -1,5 +1,6 @@
 package dev.wifiadmin.app.ui.login
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,7 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,13 +39,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.wifiadmin.app.ui.components.EXPIRY_MESSAGE
+import dev.wifiadmin.app.ui.theme.WifiAdminTheme
+import dev.wifiadmin.app.ui.theme.WifiDims
 
 /**
  * The connection screen.
@@ -81,18 +90,18 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(WifiDims.Space6),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(WifiDims.Space4)
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(WifiDims.Space2)
             ) {
                 Icon(
                     imageVector = Icons.Default.Router,
                     contentDescription = null,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(WifiDims.IconLogin),
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Text(
@@ -107,16 +116,14 @@ fun LoginScreen(
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    modifier = Modifier.padding(WifiDims.Space6),
+                    verticalArrangement = Arrangement.spacedBy(WifiDims.Space4)
                 ) {
                     DetectedRouterRow(
                         host = state.host,
@@ -128,11 +135,18 @@ fun LoginScreen(
                         onValueChange = viewModel::onUsernameChanged,
                         label = { Text("Nom d'utilisateur") },
                         singleLine = true,
+                        enabled = !state.isConnecting,
                         leadingIcon = {
                             Icon(Icons.Default.Person, contentDescription = null)
                         },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        modifier = Modifier.fillMaxWidth()
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Next
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WifiDims.FieldMin)
+                            .testTag("login_username_field")
                     )
 
                     OutlinedTextField(
@@ -140,11 +154,15 @@ fun LoginScreen(
                         onValueChange = { password = it },
                         label = { Text("Mot de passe") },
                         singleLine = true,
+                        enabled = !state.isConnecting,
                         leadingIcon = {
                             Icon(Icons.Default.Lock, contentDescription = null)
                         },
                         trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            IconButton(
+                                onClick = { passwordVisible = !passwordVisible },
+                                modifier = Modifier.heightIn(min = WifiDims.TouchMin)
+                            ) {
                                 Icon(
                                     imageVector = if (passwordVisible) {
                                         Icons.Default.VisibilityOff
@@ -168,7 +186,10 @@ fun LoginScreen(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Done
                         ),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WifiDims.FieldMin)
+                            .testTag("login_password_field")
                     )
 
                     Button(
@@ -177,7 +198,10 @@ fun LoginScreen(
                             state.host.isNotBlank() &&
                             state.username.isNotBlank() &&
                             password.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = WifiDims.FieldMin)
+                            .testTag("login_connect_button")
                     ) {
                         if (state.isConnecting) {
                             CircularProgressIndicator(
@@ -185,12 +209,18 @@ fun LoginScreen(
                                 strokeWidth = 2.dp,
                                 color = MaterialTheme.colorScheme.onPrimary
                             )
-                            Spacer(Modifier.width(10.dp))
+                            Spacer(Modifier.width(WifiDims.Space2))
                             Text("Connexion…")
                         } else {
                             Text("Se connecter")
                         }
                     }
+
+                    Text(
+                        text = "Le mot de passe n'est pas conservé. Il sera redemandé à chaque session.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -199,7 +229,8 @@ fun LoginScreen(
             Text(
                 text = "Connexion locale uniquement. Le mot de passe n'est pas conservé.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("login_local_only_notice")
             )
         }
     }
@@ -207,79 +238,90 @@ fun LoginScreen(
 
 @Composable
 private fun DetectedRouterRow(host: String, wasDetected: Boolean) {
-    Row(
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Icon(
-            imageVector = if (wasDetected) {
-                Icons.Default.CheckCircle
-            } else {
-                Icons.Default.Router
-            },
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = if (wasDetected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
         )
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = if (wasDetected) "Routeur détecté" else "Routeur non détecté",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = if (wasDetected) {
-                    host
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(WifiDims.Space4),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2)
+        ) {
+            Icon(
+                imageVector = if (wasDetected) {
+                    Icons.Default.CheckCircle
                 } else {
-                    "$host (adresse par défaut) — vérifiez le Wi-Fi"
+                    Icons.Default.Router
                 },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                contentDescription = null,
+                modifier = Modifier.size(WifiDims.IconBanner),
+                tint = if (wasDetected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = if (wasDetected) "Routeur détecté" else "Routeur non détecté",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (wasDetected) {
+                        host
+                    } else {
+                        "$host (adresse par défaut) — vérifiez le Wi-Fi"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun LoginResultMessage(result: LoginResult) {
-    when (result) {
-        LoginResult.None -> Unit
-        LoginResult.Success -> Unit
-        LoginResult.InvalidCredentials -> MessageCard(
-            text = "Identifiants refusés par le routeur.",
-            isError = true
-        )
-        LoginResult.NetworkError -> MessageCard(
-            text = "Le routeur est injoignable. Vérifiez que le téléphone est " +
-                "connecté au Wi-Fi du routeur, puis réessayez.",
-            isError = true
-        )
-        LoginResult.Timeout -> MessageCard(
-            text = "Le routeur n'a pas répondu à temps. Vérifiez le Wi-Fi, " +
-                "puis réessayez.",
-            isError = true
-        )
-        LoginResult.SessionExpired -> MessageCard(
-            text = EXPIRY_MESSAGE,
-            isError = false
-        )
-        LoginResult.UnexpectedResponse -> MessageCard(
-            text = "Le routeur a répondu de façon inattendue.",
-            isError = true
-        )
-        is LoginResult.Cooldown -> MessageCard(
-            text = result.retryAfterSeconds?.let { seconds ->
-                "Trop de tentatives. Le routeur refuse les connexions " +
-                    "pendant encore $seconds secondes."
-            } ?: "Le routeur n'a pas ouvert de session. Patientez quelques " +
-                "minutes avant de réessayer.",
-            isError = true
-        )
+    AnimatedVisibility(visible = result != LoginResult.None && result != LoginResult.Success) {
+        when (result) {
+            LoginResult.None -> Unit
+            LoginResult.Success -> Unit
+            LoginResult.InvalidCredentials -> MessageCard(
+                text = "Identifiants refusés par le routeur.",
+                isError = true
+            )
+            LoginResult.NetworkError -> MessageCard(
+                text = "Le routeur est injoignable. Vérifiez que le téléphone est " +
+                    "connecté au Wi-Fi du routeur, puis réessayez.",
+                isError = true
+            )
+            LoginResult.Timeout -> MessageCard(
+                text = "Le routeur n'a pas répondu à temps. Vérifiez le Wi-Fi, " +
+                    "puis réessayez.",
+                isError = true
+            )
+            LoginResult.SessionExpired -> MessageCard(
+                text = EXPIRY_MESSAGE,
+                isError = false
+            )
+            LoginResult.UnexpectedResponse -> MessageCard(
+                text = "Le routeur a répondu de façon inattendue.",
+                isError = true
+            )
+            is LoginResult.Cooldown -> MessageCard(
+                text = result.retryAfterSeconds?.let { seconds ->
+                    "Trop de tentatives. Le routeur refuse les connexions " +
+                        "pendant encore $seconds secondes."
+                } ?: "Le routeur n'a pas ouvert de session. Patientez quelques " +
+                    "minutes avant de réessayer.",
+                isError = true
+            )
+        }
     }
 }
 
@@ -293,7 +335,9 @@ private fun MessageCard(text: String, isError: Boolean) {
                 MaterialTheme.colorScheme.secondaryContainer
             }
         ),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Assertive }
     ) {
         Text(
             text = text,
@@ -303,7 +347,23 @@ private fun MessageCard(text: String, isError: Boolean) {
             } else {
                 MaterialTheme.colorScheme.onSecondaryContainer
             },
-            modifier = Modifier.padding(14.dp)
+            modifier = Modifier.padding(WifiDims.Space4)
         )
+    }
+}
+
+@Preview(showBackground = true, name = "Connexion — clair")
+@Composable
+private fun LoginPreview() {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
+        DetectedRouterRow(host = "192.168.1.1", wasDetected = true)
+    }
+}
+
+@Preview(showBackground = true, name = "Connexion — sombre")
+@Composable
+private fun LoginDarkPreview() {
+    WifiAdminTheme(darkTheme = true, dynamicColor = false) {
+        DetectedRouterRow(host = "192.168.1.1", wasDetected = false)
     }
 }

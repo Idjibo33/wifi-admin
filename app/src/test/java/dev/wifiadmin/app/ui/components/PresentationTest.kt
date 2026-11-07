@@ -147,7 +147,62 @@ class PresentationTest {
         assertNull(formatSnapshotDate(null))
     }
 
+    @Test
+    fun `the badge colours pass the contrast requirement`() {
+        // The badge text is `Color.White` on these tints. WCAG AA asks for
+        // 4.5:1 for normal text; a colour that fails it is unreadable,
+        // especially in the dark theme where the badges keep the same tints.
+        DevicePresence.entries.forEach { presence ->
+            val ratio = contrastRatio(BLANC, presence.badgeColor())
+            assertTrue(
+                "the badge of $presence must contrast with white text, was $ratio",
+                ratio >= MIN_CONTRAST
+            )
+        }
+    }
+
+    @Test
+    fun `the cached badge colour passes the contrast requirement`() {
+        val ratio = contrastRatio(BLANC, DevicePresence.ACTIVE.cachedBadgeColor())
+        assertTrue(
+            "the cached badge must contrast with white text, was $ratio",
+            ratio >= MIN_CONTRAST
+        )
+    }
+
+    @Test
+    fun `the signal needs a wording`() {
+        assertEquals("Signal excellent", signalQualityLabel(-40))
+        assertEquals("Signal très faible", signalQualityLabel(-95))
+        assertEquals("Signal inconnu", signalQualityLabel(null))
+    }
+
     companion object {
         private const val CAPTURED_AT = 1_700_000_000_000L
+
+        private val BLANC = androidx.compose.ui.graphics.Color.White
+
+        /** The WCAG AA contrast ratio for normal text. */
+        private const val MIN_CONTRAST = 4.5
+
+        /** The contrast ratio of two colours, between 1 and 21. */
+        private fun contrastRatio(first: androidx.compose.ui.graphics.Color, second: androidx.compose.ui.graphics.Color): Double {
+            val l1 = luminance(first)
+            val l2 = luminance(second)
+            val hi = maxOf(l1, l2)
+            val lo = minOf(l1, l2)
+            return (hi + 0.05) / (lo + 0.05)
+        }
+
+        /** The WCAG relative luminance of a colour. */
+        private fun luminance(color: androidx.compose.ui.graphics.Color): Double {
+            fun linearise(value: Float): Double {
+                val u = value.toDouble()
+                return if (u <= 0.03928) u / 12.92 else Math.pow((u + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linearise(color.red) +
+                0.7152 * linearise(color.green) +
+                0.0722 * linearise(color.blue)
+        }
     }
 }

@@ -220,13 +220,14 @@ fun Set<WifiBand>.label(): String = when {
  * The colour of the presence badge.
  *
  * These are theme-independent tints so the badge stays legible in both the
- * light and the dark theme.
+ * light and the dark theme. Every one of them is light enough for
+ * [Color.White] to pass WCAG AA contrast (>= 4.5:1).
  */
 fun DevicePresence.badgeColor(): Color = when (this) {
     DevicePresence.ACTIVE -> Color(0xFF2E7D32)
     DevicePresence.CABLED -> Color(0xFF1565C0)
-    DevicePresence.STALE -> Color(0xFFEF6C00)
-    DevicePresence.UNKNOWN -> Color(0xFF757575)
+    DevicePresence.STALE -> Color(0xFFBF5600)
+    DevicePresence.UNKNOWN -> Color(0xFF616161)
 }
 
 /**
@@ -250,6 +251,22 @@ fun DevicePresence.cachedLabel(): String = when (this) {
  * connected" must not suggest a live reading.
  */
 fun DevicePresence.cachedBadgeColor(): Color = Color(0xFF616161)
+
+/**
+ * The signal quality wording for an RSSI level.
+ *
+ * The signal is only ever shown for an active radio association, and it is
+ * not only coloured: the wording is what a reader of the screen (or of a
+ * screen reader) gets.
+ */
+fun signalQualityLabel(rssiDbm: Int?): String = when {
+    rssiDbm == null -> "Signal inconnu"
+    rssiDbm >= -55 -> "Signal excellent"
+    rssiDbm >= -65 -> "Signal bon"
+    rssiDbm >= -75 -> "Signal moyen"
+    rssiDbm >= -85 -> "Signal faible"
+    else -> "Signal très faible"
+}
 
 /**
  * Formats the moment a snapshot was captured, for the "last known data"

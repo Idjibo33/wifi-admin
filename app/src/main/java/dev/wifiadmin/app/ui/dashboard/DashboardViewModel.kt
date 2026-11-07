@@ -289,6 +289,8 @@ class DashboardViewModel(
  */
 fun formatLastRefresh(millis: Long?): String? {
     if (millis == null) return null
-    val formatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    // The day is part of the wording: a device list can be kept for
+    // thirty days, and an hour without its date is useless.
+    val formatter = SimpleDateFormat("dd/MM/yyyy à HH:mm:ss", Locale.getDefault())
     return formatter.format(Date(millis))
 }
