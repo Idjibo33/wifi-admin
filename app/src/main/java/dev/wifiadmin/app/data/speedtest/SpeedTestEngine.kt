@@ -17,8 +17,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -159,82 +157,159 @@ class SpeedTestRepository(
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
     private val policy: SpeedTestPolicy = SpeedTestPolicy(),
 ) {
+    /** Serialises the run slot, the generation and every engine.cancel(). */
     private val lock = Any()
+
+    /** Incremented by each start() and each cancel(); filters stale writes. */
     private val generation = AtomicInteger(0)
+
+    /**
+     * The run slot: the single-flight criterion.
+     *
+     * Set under [lock] before launching, cleared under [lock] from
+     * [Job.invokeOnCompletion] — that is, only once the coroutine has fully
+     * finished and its `finally` has released the engine. `Job.isActive`
+     * cannot replace it: it is already false while a cancelled coroutine is
+     * still unwinding and still owns the engine.
+     */
+    @Volatile private var running = false
     @Volatile private var runJob: Job? = null
     @Volatile private var startNetworkKey: String? = null
 
     private val _state = MutableStateFlow<SpeedTestState>(SpeedTestState.Idle)
     val state = _state.asStateFlow()
 
-    val isRunning: Boolean get() = runJob?.isActive == true
+    /** True while a run owns the engine, including its final cleanup. */
+    val isRunning: Boolean get() = running
 
     /**
      * Starts one test. Returns immediately; progress is observed through
-     * [state]. A second start while one is running leaves the running
-     * test untouched (single flight).
+     * [state].
+     *
+     * A second call while a run is active **or still releasing its
+     * resources** is refused: the slot stays owned until the previous
+     * coroutine has completed. A refused start never overwrites the state
+     * of the run that owns the slot.
      */
     fun start() {
-        val status = try {
-            monitor.currentStatus()
-        } catch (t: Throwable) {
-            _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
-            return
-        }
-        if (status !is LocalNetworkStatus.LocalWifi) {
-            _state.value = SpeedTestState.Failed(SpeedTestFailure.NoWiFi)
-            return
-        }
-        val myGeneration: Int
+        // Read the network outside the lock (binder call), but never publish
+        // a failure over the state of a run that owns the slot.
+        val statusOrError = runCatching { monitor.currentStatus() }
         synchronized(lock) {
-            if (runJob?.isActive == true) {
+            if (running) return
+            val status = statusOrError.getOrElse {
+                _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
                 return
             }
-            myGeneration = generation.incrementAndGet()
+            if (status !is LocalNetworkStatus.LocalWifi) {
+                _state.value = SpeedTestState.Failed(SpeedTestFailure.NoWiFi)
+                return
+            }
+            running = true
+            val myGeneration = generation.incrementAndGet()
             startNetworkKey = status.identity.key
             _state.value = SpeedTestState.Running(SpeedTestPhase.CHECKING_NETWORK)
-            runJob = scope.launch(ioDispatcher) { run(myGeneration) }
+            val job = try {
+                scope.launch(ioDispatcher) { execute(myGeneration, status.identity.key) }
+            } catch (t: Throwable) {
+                // A stopped dispatcher must not leak the slot.
+                running = false
+                _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
+                return
+            }
+            runJob = job
+            // Runs strictly after the coroutine body (and its finally).
+            job.invokeOnCompletion { onRunCompleted(job) }
         }
     }
 
-    private suspend fun run(myGeneration: Int) {
+    /**
+     * Releases the slot, under [lock] and only for the job that owns it.
+     *
+     * This is the only place where [running] returns to false, so a new
+     * run can never start before the previous one has fully completed.
+     */
+    private fun onRunCompleted(job: Job) {
+        synchronized(lock) {
+            if (runJob !== job) return
+            runJob = null
+            running = false
+        }
+    }
+
+    /**
+     * Test-and-write under [lock]: a stale run can neither publish a
+     * progress update, a result nor a failure after it was cancelled.
+     */
+    private fun publish(myGeneration: Int, newState: SpeedTestState) {
+        synchronized(lock) {
+            if (myGeneration == generation.get()) _state.value = newState
+        }
+    }
+
+    private suspend fun execute(myGeneration: Int, expectedNetworkKey: String) {
         try {
-            val result = withTimeout(policy.maxDurationMillis) {
-                engine.run { progress ->
-                    if (myGeneration == generation.get()) _state.value = progress
-                }
+            // Revalidate after taking the slot: the network may have
+            // changed between currentStatus() and the coroutine start.
+            val status = try {
+                monitor.currentStatus()
+            } catch (t: Throwable) {
+                publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Unexpected))
+                return
             }
-            if (myGeneration == generation.get()) _state.value = SpeedTestState.Done(result)
+            if (status !is LocalNetworkStatus.LocalWifi) {
+                publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.NoWiFi))
+                return
+            }
+            if (status.identity.key != expectedNetworkKey) {
+                publish(myGeneration, SpeedTestState.Cancelled)
+                return
+            }
+            val result = withTimeout(policy.maxDurationMillis) {
+                engine.run { progress -> publish(myGeneration, progress) }
+            }
+            publish(myGeneration, SpeedTestState.Done(result))
         } catch (e: TimeoutCancellationException) {
-            if (myGeneration == generation.get()) _state.value = SpeedTestState.Failed(SpeedTestFailure.Timeout)
+            publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Timeout))
         } catch (e: SpeedTestFailureException) {
-            if (myGeneration == generation.get()) _state.value = SpeedTestState.Failed(e.failure)
+            publish(myGeneration, SpeedTestState.Failed(e.failure))
         } catch (e: CancellationException) {
-            if (myGeneration == generation.get()) _state.value = SpeedTestState.Cancelled
+            publish(myGeneration, SpeedTestState.Cancelled)
             throw e
         } catch (t: Throwable) {
-            if (myGeneration == generation.get()) _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
+            publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Unexpected))
         } finally {
-            engine.cancel()
             synchronized(lock) {
-                if (runJob?.isActive == true && runJob === null) runJob = null
-                // The job clears itself when inactive; if this job ended, clear.
-                if (runJob != null && !runJob!!.isActive) runJob = null
+                // Only the run that still owns the generation releases the
+                // engine. A cancelled run already had engine.cancel() called
+                // under this lock by cancel(); a stale run therefore can
+                // never touch a successor's engine.
+                if (myGeneration == generation.get()) {
+                    runCatching { engine.cancel() }
+                }
             }
         }
     }
 
-    /** Cancels the running test, its sockets and its callbacks. */
+    /**
+     * Cancels the running test, its sockets and its callbacks.
+     *
+     * Everything happens under [lock], so the engine is closed before the
+     * slot can be released and no successor can exist yet: an old
+     * cancellation can never reach a newer run. A terminal `Cancelled`
+     * state is published for every reason (user, network loss, network
+     * change), except when a `Done`/`Failed` state was already published.
+     */
     fun cancel(reason: CancelReason = CancelReason.USER) {
-        val job: Job?
         synchronized(lock) {
-            job = runJob
-            if (job?.isActive != true) return
+            if (!running) return
             generation.incrementAndGet()
+            runCatching { engine.cancel() }
+            runJob?.cancel()
+            if (_state.value is SpeedTestState.Running) {
+                _state.value = SpeedTestState.Cancelled
+            }
         }
-        engine.cancel()
-        job?.cancel()
-        if (reason == CancelReason.USER) _state.value = SpeedTestState.Cancelled
     }
 
     /** A cold flow that cancels the test when the network leaves Wi-Fi or changes identity. */

@@ -57,8 +57,12 @@ class SpeedTestRepositoryConcurrencyTest {
         capped = false, providerLabel = label, networkKey = "k", wifiLink = null, capturedAtWallMillis = 1,
     )
 
-    private fun repo(engine: SpeedTestEngine, monitor: NetworkMonitor, scope: CoroutineScope) =
-        SpeedTestRepository(engine, monitor, scope = scope, ioDispatcher = Dispatchers.Unconfined)
+    private fun repo(engine: SpeedTestEngine, monitor: NetworkMonitor, scope: CoroutineScope): SpeedTestRepository {
+        val dispatcher = (scope as? kotlinx.coroutines.test.TestScope)?.testScheduler?.let {
+            kotlinx.coroutines.test.StandardTestDispatcher(it)
+        } ?: Dispatchers.Unconfined
+        return SpeedTestRepository(engine, monitor, scope = scope, ioDispatcher = dispatcher)
+    }
 
     @Test fun `concurrent starts run a single engine run`() = runTest {
         val monitor = FakeMonitor(wifiA)

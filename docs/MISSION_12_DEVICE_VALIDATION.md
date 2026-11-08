@@ -24,11 +24,18 @@ Stocké hors puce, `docs/screenshots/mission-12/mission12_screenshots/` (4 PNG) 
 | `DevicesListInstrumentedTest` | 14 OK |
 | `DeviceAccessibilityInstrumentedTest` + `SessionExpiryInstrumentedTest` + `NavigationInstrumentedTest` | 3 + 4 + 3 OK |
 | `SpeedTestInstrumentedTest` | 5 OK |
-| JVM (`router-core` 193 + `poc-cli` 56 + `app` 352 dont 30 speedtest) | 601 tests au total, 0 échec |
+| JVM (`router-core` 193 + `poc-cli` 56 + `app` 363 dont 41 speedtest) | 612 tests au total, 0 échec |
 | FakeRouter | pare-feu 10/10, expiration 3/3, aucune écriture |
 
 Suite complète 54 tests non lancée d'un bloc (polling 30 s) ; `NetworkChangeInstrumentedTest`
 seul OK en ~78 s le 07/11.
+
+**Réserve (revue corrective finale, 08/11)** : le Pixel 7 Pro n'était plus connecté
+(`adb devices` vide) lors de la dernière correction de concurrence. Les tests JVM, les builds
+`assembleDebug`/`assembleDebugAndroidTest` et les scénarios FakeRouter ont été rejoués ; les
+tests instrumentés et les captures n'ont pas été régénérés. Les captures restent des maquettes
+de démonstration issues de la révision `e14b39e` : leur bouton « Relancer » actif ne reflète
+plus l'écran actuel (bouton désactivé, bandeau d'indisponibilité en tête).
 
 ## 3. Procédure manuelle (à effectuer après branchement d'un fournisseur)
 
@@ -44,9 +51,14 @@ seul OK en ~78 s le 07/11.
 ## 4. Vérification du routage Wi-Fi
 
 Avant tout test réel : `ADB` + `NetworkMonitor = LocalWifi`, hotspot exclu, et le test ne
-débute que si le Wi-Fi est le réseau courant. Pendant : le socket est lié au `Network` Wi-Fi
-(`bindProcessToNetwork` + `socketFactory` de `Network`) ; en cas de perte, annulation immédiate.
-Un Wi-Fi sans Internet ne lance pas de test sur la data mobile.
+débute que si le Wi-Fi est le réseau courant. Le statut est relu une seconde fois après la prise
+du slot, pour éviter une fenêtre de changement. En cas de perte ou de changement d'identité,
+annulation immédiate ; aucun fallback mobile.
+
+Aucun moteur réseau n'existe dans cette version : il n'y a donc **pas** de socket à lier
+aujourd'hui. Quand un fournisseur validé sera branché, il devra lier ses sockets au `Network`
+Wi-Fi (`bindProcessToNetwork` + `socketFactory`) — ce n'est pas implémenté et ne doit pas être
+présenté comme acquis.
 
 ## 5. Budget de données et critères d'acceptation
 

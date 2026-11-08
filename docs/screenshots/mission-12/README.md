@@ -14,4 +14,8 @@
 | `result-sombre.png` | Terminé falsifié 42,5 / 18,2 / 24 ms |
 
 Capturées sur Pixel 7 Pro `2B091FDH3004DG` (Android 17) via `SpeedTestInstrumentedTest`
-(2026-11-07 ~19 h). Harnais et procédure : `docs/MISSION_12_DEVICE_VALIDATION.md`.
+(2026-11-07 ~19 h), avant la revue corrective de concurrence. **Maquettes de démonstration,
+pas des mesures** : le bouton « Relancer » y apparaît actif alors que l'écran actuel le
+désactive, et le bandeau d'indisponibilité est désormais affiché en tête. Elles n'ont pas été
+régénérées car le Pixel n'était plus connecté le 08/11. Harnais et procédure :
+`docs/MISSION_12_DEVICE_VALIDATION.md`.
