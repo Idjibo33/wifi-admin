@@ -15,6 +15,9 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // LibreSpeed endpoint: empty = disabled. Never a public server by default.
+        buildConfigField("String", "SPEEDTEST_BASE_URL", "\"\"")
     }
 
     buildTypes {
@@ -34,6 +37,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions {
@@ -64,6 +68,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
 
     debugImplementation(libs.compose.ui.tooling)
 
@@ -81,4 +86,5 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.org.json)
+    testImplementation(libs.mockwebserver)
 }

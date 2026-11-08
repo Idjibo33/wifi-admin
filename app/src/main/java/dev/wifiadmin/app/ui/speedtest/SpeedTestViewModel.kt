@@ -38,6 +38,8 @@ data class SpeedTestUiState(
     val showConsent: Boolean = false,
     val isNetworkOk: Boolean = true,
     val previousResult: SpeedTestResult? = null,
+    val providerLabel: String? = null,
+    val targetHost: String? = null,
 ) {
     val isDisabled: Boolean get() = failure is SpeedTestFailure.Disabled
 }
@@ -54,9 +56,18 @@ class SpeedTestViewModel(
     private val preferences: SpeedTestPreferencesStore,
     private val monitor: NetworkMonitor,
     private val linkProvider: dev.wifiadmin.app.data.speedtest.WifiLinkInfoProvider? = null,
+    private val providerLabel: String? = null,
+    private val targetHost: String? = null,
+    private val initiallyDisabled: Boolean = true,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SpeedTestUiState())
+    private val _state = MutableStateFlow(
+        SpeedTestUiState(
+            failure = if (initiallyDisabled) SpeedTestFailure.Disabled else null,
+            providerLabel = providerLabel,
+            targetHost = sanitizeHostLabel(targetHost) ?: extractTargetHost(providerLabel),
+        )
+    )
     val state: StateFlow<SpeedTestUiState> = _state.asStateFlow()
 
     init {
@@ -88,6 +99,8 @@ class SpeedTestViewModel(
                         currentMbps = repoState.result.downloadMbps,
                         wifiLink = repoState.result.wifiLink ?: current.wifiLink,
                         failure = null,
+                        providerLabel = repoState.result.providerLabel,
+                        targetHost = extractTargetHost(repoState.result.providerLabel) ?: current.targetHost,
                     )
                     SpeedTestState.Cancelled -> current.copy(
                         isRunning = false,

@@ -8,6 +8,7 @@ import dev.wifiadmin.app.ui.devices.DevicesViewModel
 import dev.wifiadmin.app.ui.login.LoginViewModel
 import dev.wifiadmin.app.ui.settings.SettingsViewModel
 import dev.wifiadmin.app.ui.speedtest.SpeedTestViewModel
+import dev.wifiadmin.app.data.speedtest.DisabledSpeedTestEngine
 
 /**
  * Creates the ViewModels of the app.
@@ -50,6 +51,8 @@ class WifiAdminViewModelFactory(
                 preferences = container.speedTestPreferences,
                 monitor = container.networkMonitor,
                 linkProvider = container.wifiLinkInfoProvider,
+                providerLabel = container.speedTestEngine.providerLabel,
+                initiallyDisabled = container.speedTestEngine is DisabledSpeedTestEngine,
             ) as T
 
         else -> throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")

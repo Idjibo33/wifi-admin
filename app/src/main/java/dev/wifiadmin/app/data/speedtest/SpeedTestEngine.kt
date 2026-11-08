@@ -266,9 +266,34 @@ class SpeedTestRepository(
                 return
             }
             val result = withTimeout(policy.maxDurationMillis) {
-                engine.run { progress -> publish(myGeneration, progress) }
+                engine.run { progress ->
+                    // Independent backstop (SEC-01): even a defective
+                    // engine cannot exceed the prepaid caps. The byte
+                    // counters traverse this wrapper, so the caps are
+                    // enforced whether or not the engine enforces them.
+                    val overDownload = progress.downloadBytes > policy.maxDownloadBytes
+                    val overUpload = progress.uploadBytes > policy.maxUploadBytes
+                    val overTotal = progress.downloadBytes + progress.uploadBytes >
+                        policy.maxDownloadBytes + policy.maxUploadBytes
+                    if (overDownload || overUpload || overTotal) {
+                        runCatching { engine.cancel() }
+                        throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
+                    }
+                    publish(myGeneration, progress)
+                }
             }
-            publish(myGeneration, SpeedTestState.Done(result))
+            // The real engine does not know the Wi-Fi identity: fill the
+            // blank network key and link from the repository's own view.
+            // Engines that already report them (Fake) are untouched.
+            val enriched = if (result.networkKey.isBlank()) {
+                result.copy(
+                    networkKey = expectedNetworkKey,
+                    wifiLink = result.wifiLink ?: runCatching { linkProvider?.current() }.getOrNull(),
+                )
+            } else {
+                result
+            }
+            publish(myGeneration, SpeedTestState.Done(enriched))
         } catch (e: TimeoutCancellationException) {
             publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Timeout))
         } catch (e: SpeedTestFailureException) {

@@ -13,7 +13,7 @@ import android.net.ConnectivityManager
 import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.SettingsStore
 import dev.wifiadmin.app.data.speedtest.AndroidWifiLinkInfoProvider
-import dev.wifiadmin.app.data.speedtest.DisabledSpeedTestEngine
+import dev.wifiadmin.app.data.speedtest.SpeedTestEngineFactory
 import dev.wifiadmin.app.data.speedtest.SpeedTestPolicy
 import dev.wifiadmin.app.data.speedtest.SpeedTestPreferencesStore
 import dev.wifiadmin.app.data.speedtest.SpeedTestRepository
@@ -123,8 +123,9 @@ class AppContainer(application: Application) {
         connectivity = application.getSystemService(ConnectivityManager::class.java)!!
     )
 
-    /** The Internet speed test engine: disabled until a provider is validated. */
-    val speedTestEngine: dev.wifiadmin.app.data.speedtest.SpeedTestEngine = DisabledSpeedTestEngine()
+    /** The Internet speed test engine: disabled until an endpoint is configured. */
+    val speedTestEngine: dev.wifiadmin.app.data.speedtest.SpeedTestEngine =
+        SpeedTestEngineFactory.create(BuildConfig.SPEEDTEST_BASE_URL)
 
     val speedTestPreferences: SpeedTestPreferencesStore = SpeedTestPreferencesStore(application)
 

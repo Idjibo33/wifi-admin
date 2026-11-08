@@ -71,10 +71,11 @@ import dev.wifiadmin.app.ui.theme.WifiDims
 /**
  * The speed test screen.
  *
- * The real Internet measurement is disabled in this version: the screen
- * stays honest, shows the Wi-Fi link (never confused with the Internet
- * rate), and tells the user where to measure externally. Consuming data
- * only ever happens on an explicit tap on a validated provider.
+ * The Internet measurement is disabled until a validated provider is
+ * configured: the screen stays honest, shows the Wi-Fi link (never
+ * confused with the Internet rate), and names the provider it would
+ * measure towards (host only, never a full URL, never an IP). Consuming
+ * data only ever happens on an explicit tap after explicit consent.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -120,7 +121,7 @@ fun SpeedTestContent(
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().testTag("speedtest_list"),
         contentPadding = PaddingValues(WifiDims.Space4),
         verticalArrangement = Arrangement.spacedBy(WifiDims.Space3),
     ) {
@@ -155,27 +156,49 @@ fun SpeedTestContent(
             }
         }
 
-        item(key = "disabled") {
-            Card(
-                modifier = Modifier.fillMaxWidth()
-                    .semantics { liveRegion = LiveRegionMode.Assertive },
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(WifiDims.Space4)) {
-                    Text(
-                        text = SpeedTestStrings.DISABLED,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+        item(key = "provider_banner") {
+            if (state.isDisabled) {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Assertive },
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
                     )
-                    Spacer(Modifier.size(WifiDims.Space2))
-                    Text(
-                        text = SpeedTestStrings.DISABLED_BODY,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                ) {
+                    Column(modifier = Modifier.padding(WifiDims.Space4)) {
+                        Text(
+                            text = SpeedTestStrings.DISABLED,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.testTag("speedtest_provider_banner"),
+                        )
+                        Spacer(Modifier.size(WifiDims.Space2))
+                        Text(
+                            text = SpeedTestStrings.DISABLED_BODY,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        ExternalLinks()
+                    }
+                }
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Assertive },
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
                     )
-                    ExternalLinks()
+                ) {
+                    Column(modifier = Modifier.padding(WifiDims.Space4)) {
+                        Text(
+                            text = providerBannerText(state.providerLabel, state.targetHost),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.testTag("speedtest_provider_banner"),
+                        )
+                        Spacer(Modifier.size(WifiDims.Space2))
+                        ExternalLinks()
+                    }
                 }
             }
         }
@@ -198,7 +221,7 @@ fun SpeedTestContent(
                         running = state.isRunning,
                     )
                     Text(
-                        text = "${formatMbps(state.currentMbps)} Mbit/s",
+                        text = gaugeRateText(state),
                         style = MaterialTheme.typography.displayLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.semantics {
@@ -221,14 +244,13 @@ fun SpeedTestContent(
                                 .testTag("speedtest_cancel_button"),
                         ) { Text("Annuler") }
                     } else {
-                        val label = if (state.previousResult != null) "Relancer" else "Lancer le test"
                         Button(
                             onClick = onStart,
-                            enabled = false,
+                            enabled = !state.isDisabled,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = WifiDims.FieldMin)
                                 .testTag("speedtest_start_button"),
-                        ) { Text(label) }
+                        ) { Text("Lancer le test") }
                     }
                 }
             }
@@ -254,24 +276,31 @@ fun SpeedTestContent(
             }
         }
 
+        item(key = "results_title") {
+            Text(
+                text = SpeedTestStrings.INTERNET_TITLE,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+
         item(key = "results") {
             val result = state.result ?: state.previousResult
             Row(horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
                 StatCard(
-                    label = "Download",
-                    value = formatMbps(result?.downloadMbps),
+                    label = "Download (Internet)",
+                    value = formatMbpsCapped(result?.downloadMbps, result?.capped == true),
                     icon = Icons.Default.Download,
                     modifier = Modifier.weight(1f),
                     accent = true,
                 )
                 StatCard(
-                    label = "Upload",
-                    value = formatMbps(result?.uploadMbps),
+                    label = "Upload (Internet)",
+                    value = formatMbpsCapped(result?.uploadMbps, result?.capped == true),
                     icon = Icons.Default.Upload,
                     modifier = Modifier.weight(1f),
                 )
                 StatCard(
-                    label = "Latence",
+                    label = "Latence (Internet)",
                     value = formatLatency(result?.latencyMillis),
                     icon = Icons.Default.Timer,
                     modifier = Modifier.weight(1f),
@@ -294,6 +323,11 @@ fun SpeedTestContent(
                     )
                     if (result != null) {
                         DetailRow(label = "Fournisseur", value = result.providerLabel)
+                        DetailRow(
+                            label = SpeedTestStrings.CONSUMPTION_LABEL,
+                            value = formatConsumption(result.downloadBytes, result.uploadBytes),
+                            modifier = Modifier.testTag("speedtest_consumption"),
+                        )
                         if (result.capped) {
                             Text(
                                 text = "Plafond atteint avant stabilisation : valeur minimale, pas débit maximal.",
@@ -371,8 +405,12 @@ fun SpeedTestContent(
             title = { Text("Avant de lancer un test") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
-                    Text("Serveur : aucun fournisseur configuré dans cette version. Aucun trafic ne sera envoyé.")
-                    Text("Données : seuls le débit mesuré, la latence et l'heure seraient conservés localement, sans identifiant routeur ni adresse IP publique.")
+                    Text(consentServerLine(state.providerLabel, state.targetHost, state.isDisabled))
+                    if (state.isDisabled) {
+                        Text("Données : seuls le débit mesuré, la latence et l'heure seraient conservés localement, sans identifiant routeur ni adresse IP publique.")
+                    } else {
+                        Text("Données : seuls le débit mesuré, la latence et l'heure seraient conservés localement ; l'adresse IP publique du Wi-Fi reste visible du serveur pendant la mesure.")
+                    }
                     Text("Consommation : le test télécharge et envoie des données réelles ; évitez un forfait mobile limité. Plafonds : 20 Mo en téléchargement, 10 Mo en envoi, 30 s.")
                 }
             },
@@ -387,6 +425,15 @@ fun SpeedTestContent(
             },
         )
     }
+}
+
+/** Big gauge rate: a capped result is a floor (`≥ … (plafonné)`). */
+private fun gaugeRateText(state: SpeedTestUiState): String {
+    val result = state.result ?: state.previousResult
+    val value = state.currentMbps ?: result?.downloadMbps
+    val capped = result?.capped == true
+    val base = formatMbps(value)
+    return if (capped && value != null) "≥ $base Mbit/s (plafonné)" else "$base Mbit/s"
 }
 
 @Composable
@@ -477,6 +524,28 @@ private fun SpeedTestDisabledPreview() {
     WifiAdminTheme(darkTheme = true, dynamicColor = false) {
         SpeedTestContent(
             state = SpeedTestUiState(failure = SpeedTestFailure.Disabled),
+            onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun SpeedTestConfiguredPreview() {
+    WifiAdminTheme(darkTheme = false, dynamicColor = false) {
+        val capped = SpeedTestResult(
+            downloadMbps = 42.5, uploadMbps = 18.2, latencyMillis = 24,
+            downloadBytes = 5L * 1024 * 1024, uploadBytes = 2L * 1024 * 1024 + 512L * 1024,
+            durationMillis = 8_000, capped = true, providerLabel = "LibreSpeed — vers speed.example.org",
+            networkKey = "host", wifiLink = WifiLinkInfo(linkSpeedMbps = 866, rssiDbm = -58, frequencyMhz = 5180, bandLabel = "5 GHz", wifiStandard = "Wi-Fi 6"),
+            capturedAtWallMillis = 1_700_000_000_000L,
+        )
+        SpeedTestContent(
+            state = SpeedTestUiState(
+                failure = null, providerLabel = "LibreSpeed", targetHost = "speed.example.org",
+                currentMbps = 42.5, result = capped, previousResult = capped,
+                wifiLink = WifiLinkInfo(linkSpeedMbps = 866, rssiDbm = -58, frequencyMhz = 5180, bandLabel = "5 GHz", wifiStandard = "Wi-Fi 6"),
+            ),
             onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
         )
     }
