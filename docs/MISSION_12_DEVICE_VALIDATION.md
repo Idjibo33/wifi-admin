@@ -1,6 +1,7 @@
 # Mission 12 — Validation sur Pixel 7 Pro
 
-> Date : 07/11/2026 · Pixel 7 Pro cheetah `2B091FDH3004DG` (Android 17, API 37), USB.
+> Date : 07/11/2026, tests et captures régénérés le 08/11/2026 · Pixel 7 Pro cheetah
+> `2B091FDH3004DG` (Android 17, API 37), USB.
 > ADB : `/home/ismael/Android/Sdk/platform-tools/adb`. **Aucun speed test réel n'a été lancé.**
 > Captures avec moteur simulé falsifié (`Moteur simulé (fictif)`, `sample-*` / `192.168.1.10`).
 
@@ -8,14 +9,15 @@
 
 Harnais instrumenté `SpeedTestInstrumentedTest` : `createComposeRule()` + `captureToImage()`,
 `WifiAdminTheme(dynamicColor=false)`, état construit à la main, `FakeSpeedTestEngine` stub.
-Stocké hors puce, `docs/screenshots/mission-12/mission12_screenshots/` (4 PNG) :
+Stocké sur l'appareil puis copié dans `docs/screenshots/mission-12/` (4 PNG, régénérés le
+08/11 depuis le code courant) :
 
 | Fichier | État |
 |---|---|
-| `ready-sombre.png` | Prêt, jauge « — », liaison fictive 866 Mbit/s −58 dBm 5 GHz Wi-Fi 6 |
-| `running-clair.png` | En cours, jauge 42 Mbit/s Téléchargement |
-| `error-disabled-sombre.png` | Idéal écran réel prod (moteur désactivé + liens externes) |
-| `result-sombre.png` | Terminé fictif 42,5 / 18,2 / 24 ms — étiquette « Moteur simulé (fictif) » |
+| `ready-clair.png` | État initial réel : bandeau « indisponible » en tête, jauge « — », bouton désactivé. La carte de liaison (866 Mbit/s, −58 dBm, 5 GHz, Wi-Fi 6) est fournie à l'écran mais sous la ligne de flottaison. |
+| `running-clair.png` | Démonstration de l'état en cours (42 Mbit/s, Téléchargement), bouton Annuler |
+| `error-disabled-sombre.png` | Écran de production : moteur désactivé + liens externes manuels |
+| `result-sombre.png` | Résultat fictif 42,5 / 18,2 / 24 ms — étiquette « Moteur simulé (fictif) », bouton Relancer désactivé |
 
 ## 2. Tests exécutés sur le Pixel
 
@@ -23,19 +25,18 @@ Stocké hors puce, `docs/screenshots/mission-12/mission12_screenshots/` (4 PNG) 
 |---|---|
 | `DevicesListInstrumentedTest` | 14 OK |
 | `DeviceAccessibilityInstrumentedTest` + `SessionExpiryInstrumentedTest` + `NavigationInstrumentedTest` | 3 + 4 + 3 OK |
-| `SpeedTestInstrumentedTest` | 5 OK |
+| `SpeedTestInstrumentedTest` | 5 OK (dont `start_button_is_disabled_without_a_provider`) |
+| `NetworkChangeInstrumentedTest` | 3 OK (~82 s) |
 | JVM (`router-core` 193 + `poc-cli` 56 + `app` 363 dont 41 speedtest) | 612 tests au total, 0 échec |
 | FakeRouter | pare-feu 10/10, expiration 3/3, aucune écriture |
 
-Suite complète 54 tests non lancée d'un bloc (polling 30 s) ; `NetworkChangeInstrumentedTest`
-seul OK en ~78 s le 07/11.
-
-**Réserve (revue corrective finale, 08/11)** : le Pixel 7 Pro n'était plus connecté
-(`adb devices` vide) lors de la dernière correction de concurrence. Les tests JVM, les builds
-`assembleDebug`/`assembleDebugAndroidTest` et les scénarios FakeRouter ont été rejoués ; les
-tests instrumentés et les captures n'ont pas été régénérés. Les captures restent des maquettes
-de démonstration issues de la révision `e14b39e` : leur bouton « Relancer » actif ne reflète
-plus l'écran actuel (bouton désactivé, bandeau d'indisponibilité en tête).
+Les 32 tests instrumentés concernés ont été rejoués le 08/11 après la correction de
+concurrence : `SpeedTestInstrumentedTest` 5/5, `DevicesListInstrumentedTest` 14/14,
+`DeviceAccessibilityInstrumentedTest` 3/3, `SessionExpiryInstrumentedTest` 4/4,
+`NavigationInstrumentedTest` 3/3, `NetworkChangeInstrumentedTest` 3/3. La suite complète
+(54 tests) n'est pas lancée d'un bloc à cause du polling de 30 s. Les captures ont été
+régénérées depuis le code courant ; elles restent des **maquettes de démonstration**, pas des
+mesures.
 
 ## 3. Procédure manuelle (à effectuer après branchement d'un fournisseur)
 

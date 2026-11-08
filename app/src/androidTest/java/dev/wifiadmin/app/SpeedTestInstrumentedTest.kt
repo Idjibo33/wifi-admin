@@ -5,9 +5,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.wifiadmin.app.data.LocalNetworkStatus
@@ -62,8 +62,8 @@ class SpeedTestInstrumentedTest {
         }
     }
 
-    @Test fun capture_ready_dark() {
-        wrap(true, SpeedTestUiState()) {
+    @Test fun capture_ready_light() {
+        wrap(false, SpeedTestUiState()) {
             SpeedTestContent(
                 state = SpeedTestUiState(
                     wifiLink = WifiLinkInfo(linkSpeedMbps = 866, rssiDbm = -58, frequencyMhz = 5180, bandLabel = "5 GHz", wifiStandard = "Wi-Fi 6"),
@@ -71,7 +71,7 @@ class SpeedTestInstrumentedTest {
                 onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
             )
         }
-        save("ready-sombre")
+        save("ready-clair")
     }
 
     @Test fun capture_running() {
@@ -135,13 +135,13 @@ class SpeedTestInstrumentedTest {
         save("result-sombre")
     }
 
-    @Test fun start_button_is_clickable() {
+    @Test fun start_button_is_disabled_without_a_provider() {
         wrap(false, SpeedTestUiState(hasConsented = true)) {
             SpeedTestContent(
                 state = SpeedTestUiState(hasConsented = true),
                 onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
             )
         }
-        compose.onNodeWithText("Lancer le test").performClick()
+        compose.onNodeWithTag("speedtest_start_button").assertIsNotEnabled()
     }
 }

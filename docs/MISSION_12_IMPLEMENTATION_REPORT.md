@@ -90,10 +90,11 @@ aucun code aujourd'hui, car aucun transport Internet n'existe.
   localisation, pas de secret, route protégée). Suite complète :
   `router-core` (193) + `poc-cli` (56) + `app` (363, dont 41 speedtest) — 612 tests au total,
   0 échec.
-- Instrumentés : `SpeedTestInstrumentedTest` (5 états Compose, dont le bouton de démarrage
-  désactivé) + captures Pixel 7 Pro falsifiées (`docs/screenshots/mission-12/`). La suite
-  instrumentée n'a **pas** été rejouée après la revue corrective finale : le Pixel n'était plus
-  connecté (`adb devices` vide). Réserve documentée dans `MISSION_12_DEVICE_VALIDATION.md`.
+- Instrumentés (Pixel 7 Pro, 08/11) : `SpeedTestInstrumentedTest` 5/5, dont
+  `start_button_is_disabled_without_a_provider` ; `DevicesListInstrumentedTest` 14/14,
+  `DeviceAccessibilityInstrumentedTest` 3/3, `SessionExpiryInstrumentedTest` 4/4,
+  `NavigationInstrumentedTest` 3/3, `NetworkChangeInstrumentedTest` 3/3. Captures régénérées
+  depuis le code courant dans `docs/screenshots/mission-12/` (maquettes de démonstration).
 - Non-régression : `fake_router_scenarios.py` 10/10, `fake_router_expiry_scenarios.py` 3/3,
   `DevicesListInstrumentedTest` 14 OK, `SessionExpiryInstrumentedTest` 4 OK (session expirée).
 
@@ -108,7 +109,8 @@ aucun code aujourd'hui, car aucun transport Internet n'existe.
   tant que le moteur est désactivé.
 - Plafonds octets : aucun backstop indépendant dans le repository ; ils reposent sur le moteur.
   À renforcer (compteur de flux) avant de brancher un moteur réseau réel.
-- Captures antérieures à la revue corrective : maquettes de démonstration, non régénérées.
+- Captures régénérées le 08/11 : maquettes de démonstration (valeurs fictives), jamais des
+  mesures réelles.
 
 ## 8. État de la PR
 
