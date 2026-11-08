@@ -2,16 +2,19 @@ package dev.wifiadmin.app.data.speedtest
 
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import dev.wifiadmin.app.data.LocalNetworkStatus
+import dev.wifiadmin.app.data.NetworkMonitor
 import okhttp3.Dns
 import java.net.UnknownHostException
 
 /**
  * The production [WifiNetworkRouteProvider]: binds one run to the
- * currently selected Wi-Fi network.
+ * Wi-Fi network validated by the [NetworkMonitor] for this run.
  *
- * The Wi-Fi network is accepted only with the Wi-Fi transport and
- * without the cellular transport (a hotspot is a Wi-Fi network that
- * also carries the cellular transport, and is never the route).
+ * The monitor is re-read at resolution time (not snapshotted at
+ * construction): the run's route is rejected unless the monitor still
+ * reports `LocalWifi`, and the candidate network must match that
+ * validation by interface name (`NetworkIdentity.interfaceName`).
  * Without such a network the run fails fast with `NoWiFi` instead of
  * falling back to any other network.
  *
@@ -21,14 +24,35 @@ import java.net.UnknownHostException
  */
 class AndroidWifiNetworkRouteProvider(
     private val connectivity: ConnectivityManager,
+    private val monitor: NetworkMonitor,
 ) : WifiNetworkRouteProvider {
 
     override fun resolveForRun(): WifiRoute? {
-        val network = connectivity.allNetworks.firstOrNull { candidate ->
-            val capabilities = connectivity.getNetworkCapabilities(candidate) ?: return@firstOrNull false
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-        } ?: return null
+        val status = monitor.currentStatus()
+        if (status !is LocalNetworkStatus.LocalWifi) return null
+        val wantedInterface = status.identity.interfaceName
+
+        val network = connectivity.allNetworks
+            .filter { candidate ->
+                val capabilities = connectivity.getNetworkCapabilities(candidate) ?: return@filter false
+                // A hotspot is a Wi-Fi network that also carries the
+                // cellular transport, and is never the route.
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+            }
+            .firstOrNull { candidate ->
+                val link = connectivity.getLinkProperties(candidate) ?: return@firstOrNull false
+                // Match the network the repository validated, never an
+                // arbitrary Wi-Fi network that happens to be available.
+                wantedInterface == null || link.interfaceName == wantedInterface
+            }
+            ?: connectivity.activeNetwork?.takeIf { active ->
+                val capabilities = connectivity.getNetworkCapabilities(active) ?: return@takeIf false
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                    (wantedInterface == null ||
+                        connectivity.getLinkProperties(active)?.interfaceName == wantedInterface)
+            } ?: return null
 
         return WifiRoute(
             socketFactory = network.socketFactory,

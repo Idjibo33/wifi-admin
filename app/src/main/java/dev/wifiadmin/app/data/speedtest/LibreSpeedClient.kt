@@ -168,13 +168,17 @@ class LibreSpeedClient(
 
     /**
      * Streams up to [maxBytes] of deterministic incompressible bytes
-     * and returns the count of bytes really written to the socket.
+     * and returns the count of bytes really written to the application
+     * stream. The count measures bytes accepted by the stream, not
+     * physical wire bytes (TLS records, retries and buffering are
+     * outside the counter's reach).
      *
      * The payload is pseudo-random output (seeded, reproducible in
      * tests), never zeroes: a proxy compressing zeroes would silently
-     * shrink the wire volume and inflate the rate. The content length
-     * is exactly the cap, so no byte beyond the policy can leave the
-     * phone. Cancellation is checked every 64 KiB chunk.
+     * shrink the wire volume and inflate the rate. Every 64 KiB block
+     * is freshly filled: no fixed block is ever repeated. The content
+     * length is exactly the cap, so no byte beyond the policy can
+     * leave the phone. Cancellation is checked every 64 KiB chunk.
      */
     suspend fun upload(
         maxBytes: Long,
@@ -189,10 +193,13 @@ class LibreSpeedClient(
 
             override fun writeTo(sink: BufferedSink) {
                 val chunk = ByteArray(65_536)
-                random.nextBytes(chunk)
                 var remaining = maxBytes
                 while (remaining > 0) {
                     if (cancelled) throw IOException("cancelled")
+                    // Fresh entropy for every block: a repeated block
+                    // would be compressible by intermediaries and
+                    // misstate the wire volume.
+                    random.nextBytes(chunk)
                     val n = minOf(chunk.size.toLong(), remaining).toInt()
                     sink.write(chunk, 0, n)
                     written.addAndGet(n.toLong())
@@ -214,6 +221,12 @@ class LibreSpeedClient(
                     throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
                 }
             }
+        } catch (e: IOException) {
+            // A cancelled call surfaces as an IOException: translate
+            // it into the cooperative cancellation here so direct
+            // callers observe one consistent contract.
+            if (cancelled) throw CancellationException("speed test cancelled")
+            throw e
         } finally {
             release(call)
         }

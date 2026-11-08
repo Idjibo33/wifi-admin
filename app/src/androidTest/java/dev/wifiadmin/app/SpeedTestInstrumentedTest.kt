@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -243,5 +244,45 @@ class SpeedTestInstrumentedTest {
         compose.onNodeWithText("Serveur : LibreSpeed — vers speed.example.org (HTTPS). Pendant la mesure, le serveur voit l'adresse IP publique du Wi-Fi.")
             .assertIsDisplayed()
         compose.onNodeWithTag("speedtest_consent_confirm").assertIsDisplayed()
+    }
+
+    @Test fun jitter_is_shown_in_light_theme() {
+        val result = cappedResult().copy(jitterMillis = 5.0)
+        wrap(false, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    failure = null,
+                    providerLabel = "LibreSpeed — vers speed.example.org",
+                    targetHost = "speed.example.org",
+                    result = result,
+                    previousResult = result,
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_list").performScrollToNode(hasText("5,0 ms (indicatif)"))
+        compose.onNodeWithText("Gigue (jitter)").assertIsDisplayed()
+        compose.onNodeWithText("5,0 ms (indicatif)").assertIsDisplayed()
+    }
+
+    @Test fun jitter_is_shown_in_dark_theme() {
+        val result = cappedResult().copy(jitterMillis = 5.0)
+        wrap(true, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    failure = null,
+                    providerLabel = "LibreSpeed — vers speed.example.org",
+                    targetHost = "speed.example.org",
+                    result = result,
+                    previousResult = result,
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_list").performScrollToNode(hasText("Latence sous charge : indisponible (non mesurée avec ce protocole)."))
+        compose.onNodeWithText("Gigue (jitter)").assertIsDisplayed()
+        compose.onNodeWithText("5,0 ms (indicatif)").assertIsDisplayed()
+        compose.onNodeWithText("Latence sous charge : indisponible (non mesurée avec ce protocole).")
+            .assertIsDisplayed()
     }
 }

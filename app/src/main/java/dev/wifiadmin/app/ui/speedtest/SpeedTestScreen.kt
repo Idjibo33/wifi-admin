@@ -306,12 +306,12 @@ fun SpeedTestContent(
                     modifier = Modifier.weight(1f),
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
+            Column(verticalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
                 StatCard(
                     label = "Gigue (jitter)",
                     value = formatJitter(result?.jitterMillis),
                     icon = Icons.Default.Timer,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
                     text = "Latence sous charge : indisponible (non mesurée avec ce protocole).",

@@ -131,6 +131,7 @@ class AppContainer(application: Application) {
             BuildConfig.SPEEDTEST_BASE_URL,
             routeProvider = AndroidWifiNetworkRouteProvider(
                 connectivity = application.getSystemService(ConnectivityManager::class.java)!!,
+                monitor = networkMonitor,
             ),
         )
 
