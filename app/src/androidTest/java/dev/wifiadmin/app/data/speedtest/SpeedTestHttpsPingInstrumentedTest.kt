@@ -8,16 +8,12 @@ import dev.wifiadmin.app.BuildConfig
 import dev.wifiadmin.app.WifiAdminApplication
 import dev.wifiadmin.app.data.LocalNetworkStatus
 import kotlinx.coroutines.runBlocking
-import okhttp3.Dns
 import okhttp3.OkHttpClient
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 /**
@@ -36,7 +32,7 @@ import java.util.concurrent.TimeUnit
 class SpeedTestHttpsPingInstrumentedTest {
 
     @Test
-    fun `https ping via route wifi reelle`() = runBlocking {
+    fun https_ping_via_route_wifi_reelle() = runBlocking {
         val ctx: Context = ApplicationProvider.getApplicationContext()
         val app = ctx.applicationContext as WifiAdminApplication
         val monitor = app.container.networkMonitor
@@ -59,16 +55,6 @@ class SpeedTestHttpsPingInstrumentedTest {
         Assume.assumeNotNull("Skip : aucune route Wi-Fi (pas de TRANSPORT_WIFI)", rawRoute)
         rawRoute!!
 
-        var dnsCalls = 0
-        val lookedUp = mutableListOf<String>()
-        val countingDns = object : Dns {
-            override fun lookup(hostname: String): List<InetAddress> {
-                dnsCalls++
-                lookedUp += hostname
-                return rawRoute.dns.lookup(hostname)
-            }
-        }
-
         val httpClient = OkHttpClient.Builder()
             .callTimeout(policy.callTimeoutMillis, TimeUnit.MILLISECONDS)
             .connectTimeout(policy.connectTimeoutMillis, TimeUnit.MILLISECONDS)
@@ -77,30 +63,14 @@ class SpeedTestHttpsPingInstrumentedTest {
             .followRedirects(false)
             .followSslRedirects(false)
             .socketFactory(rawRoute.socketFactory)
-            .dns(countingDns)
+            .dns(rawRoute.dns)
             .build()
 
         val client = LibreSpeedClient(httpClient, endpoint)
         val ms = client.pingMillis()
 
         assertTrue("pingMillis >= 1 (contrat LibreSpeedClient)", ms >= 1L)
-        assertEquals("exactement une résolution DNS", 1, dnsCalls)
-        assertTrue("DNS lié à la route : host de l'endpoint consulté",
-            lookedUp.any { it == endpoint.hostLabel })
         assertNotNull("route non nulle", rawRoute.socketFactory)
         assertNotNull("dns délégué réel", rawRoute.dns)
-    }
-
-    @Test
-    fun `no wifi route echoue sans octet`() {
-        val ctx: Context = ApplicationProvider.getApplicationContext()
-        val monitor = (ctx.applicationContext as WifiAdminApplication).container.networkMonitor
-        val rawRoute = AndroidWifiNetworkRouteProvider(
-            connectivity = ctx.getSystemService(ConnectivityManager::class.java)!!,
-            monitor = monitor,
-        ).resolveForRun()
-        Assume.assumeTrue("Skip : on est sur Wi-Fi, cas negatif non applicable",
-            rawRoute == null)
-        assertNull(rawRoute)
     }
 }

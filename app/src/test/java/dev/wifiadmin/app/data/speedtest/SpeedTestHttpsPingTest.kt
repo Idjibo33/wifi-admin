@@ -1,5 +1,6 @@
 package dev.wifiadmin.app.data.speedtest
 
+import dev.wifiadmin.app.data.TestAppClock
 import kotlinx.coroutines.runBlocking
 import okhttp3.Dns
 import okhttp3.OkHttpClient
@@ -71,5 +72,36 @@ class SpeedTestHttpsPingTest {
         assertTrue(accepted != null && accepted.baseUrl == "https://192.168.1.174:8443")
         val loopbackHttp = SpeedTestEndpointValidator.parse("http://127.0.0.1:8280/")
         assertTrue(loopbackHttp != null)
+    }
+
+    @Test fun `sans route wifi aucune requete http`() = runBlocking {
+        server.start()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(req: RecordedRequest): MockResponse =
+                MockResponse().setResponseCode(200).setBody("")
+        }
+        val endpoint = SpeedTestEndpointValidator.parse(server.url("/").toString())!!
+        val httpClient = OkHttpClient.Builder()
+            .callTimeout(5, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        val engine = LibreSpeedEngine(
+            endpoint = endpoint,
+            baseHttpClient = httpClient,
+            policy = SpeedTestPolicy(),
+            clock = TestAppClock(),
+            routeProvider = WifiNetworkRouteProvider { null },
+        )
+        try {
+            engine.run { }
+            throw AssertionError("expected NoWiFi")
+        } catch (ex: SpeedTestFailureException) {
+            assertEquals(SpeedTestFailure.NoWiFi, ex.failure)
+        }
+        assertEquals("aucune requête HTTP sans route Wi-Fi", 0, server.requestCount)
     }
 }
