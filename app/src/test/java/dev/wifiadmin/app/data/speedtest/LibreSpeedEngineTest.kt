@@ -41,7 +41,7 @@ class LibreSpeedEngineTest {
         val endpoint = SpeedTestEndpointValidator.parse(server.url("/").toString())!!
         return LibreSpeedEngine(
             endpoint = endpoint,
-            client = LibreSpeedClient(httpClient(), endpoint),
+            baseHttpClient = httpClient(),
             policy = policy,
             clock = TestAppClock(),
         )
@@ -144,18 +144,22 @@ class LibreSpeedEngineTest {
 
     @Test fun `cancel closes the in-flight call`() = runBlocking {
         server.start()
-        route(10_000_000)
+        val downloadSeen = java.util.concurrent.CountDownLatch(1)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
-                val slow = MockResponse().setResponseCode(200)
-                    .setBody(bigBody(10_000_000))
-                    .setBodyDelay(5, TimeUnit.SECONDS)
-                return slow
+                return if ((request.path ?: "").contains("garbage.php")) {
+                    downloadSeen.countDown()
+                    MockResponse().setResponseCode(200)
+                        .setBody(bigBody(10_000_000))
+                        .setBodyDelay(5, TimeUnit.SECONDS)
+                } else {
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                }
             }
         }
         val e = engine(SpeedTestPolicy(latencyProbes = 1))
-        val job = async { e.run { } }
-        Thread.sleep(300)
+        val job = async(kotlinx.coroutines.Dispatchers.IO) { e.run { } }
+        assertTrue("download doit etre en vol avant cancel", downloadSeen.await(5, TimeUnit.SECONDS))
         e.cancel()
         try {
             job.await()
@@ -163,5 +167,6 @@ class LibreSpeedEngineTest {
         } catch (ce: CancellationException) {
             assertTrue(ce is CancellationException)
         }
+        job.cancel()
     }
 }

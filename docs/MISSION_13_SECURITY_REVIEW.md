@@ -268,3 +268,25 @@ NV-09 interdiction gelée de l'appel `getIP.php`.
 *Contenu de ce document : aucun secret, aucune adresse IP publique, aucun SSID/MAC,
 aucune donnée d'utilisateur. Revue indépendante de la propension du projet — aucun
 fichier de production n'a été modifié.*
+
+## Additif de revue corrective (08/11/2026)
+
+Mises à jour après implémentation des corrections (`MISSION_13_CORRECTION_REPORT.md`) :
+
+- **SEC-01 clos** : backstop sur la progression + contrôle du résultat terminal
+  (`SpeedTestEngine.kt`) ; commentaire de portée réécrit (filet sur le rapport ≠ garantie sur le fil ;
+  seule la borne en flux du client garantit le fil). Vérifié par `SpeedTestRepositoryBackstopTest`
+  (3/3, dont moteur sur-cap silencieux).
+- **SEC-05 clos** : timeouts `SpeedTestPolicy` branchés sur le client par run
+  (`SpeedTestEngineFactory`), hors `router-core`.
+- **NV-04 suivi** : routage physique Wi-Fi implémenté (`WifiNetworkRouteProvider` +
+  `AndroidWifiNetworkRouteProvider`, `Network.socketFactory` + DNS via `getAllByName`,
+  résolu par run). Preuve JVM : `SpeedTestRoutingTest` (null → `NoWiFi` sans requête,
+  DNS/socket du fake exploités, 2 runs → 2 résolutions). Limites §4 de `WIFI_ROUTING`
+  maintenues (TOCTOU, VPN, OEM) : recette appareil requise.
+- **CORR-04 clos** : commentaire du backstop réécrit avec la portée exacte.
+- **CORR-01 (SEC-02) partiellement traité** : toujours `usesCleartextTraffic=true` (trafic
+  routeur LAN) ; le moteur exige HTTPS + `followRedirects=false` + validation stricte.
+  Durcissement `networkSecurityConfig` reste un chantier séparé (risque d'impacter le routeur).
+- **CORR-03 / CORR-05 ouverts** (jitter ajouté sans toucher la jauge ; tests frontière
+  `getIP`/`telemetry` à étendre si les règles du projet l'autorisent).

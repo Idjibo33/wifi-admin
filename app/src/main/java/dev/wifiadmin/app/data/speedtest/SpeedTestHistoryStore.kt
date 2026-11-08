@@ -32,6 +32,7 @@ object SpeedTestHistoryCodec {
                 put("dl", r.downloadMbps ?: JSONObject.NULL)
                 put("ul", r.uploadMbps ?: JSONObject.NULL)
                 put("latency", r.latencyMillis ?: JSONObject.NULL)
+                put("jitter", r.jitterMillis ?: JSONObject.NULL)
                 put("dlBytes", r.downloadBytes)
                 put("ulBytes", r.uploadBytes)
                 put("durationMs", r.durationMillis)
@@ -57,6 +58,8 @@ object SpeedTestHistoryCodec {
                 downloadMbps = if (o.isNull("dl")) null else o.optDouble("dl").takeIf { !it.isNaN() },
                 uploadMbps = if (o.isNull("ul")) null else o.optDouble("ul").takeIf { !it.isNaN() },
                 latencyMillis = if (o.isNull("latency")) null else o.optLong("latency"),
+                jitterMillis = if (!o.has("jitter") || o.isNull("jitter")) null
+                    else o.optDouble("jitter").takeIf { !it.isNaN() },
                 downloadBytes = o.optLong("dlBytes", 0),
                 uploadBytes = o.optLong("ulBytes", 0),
                 durationMillis = o.optLong("durationMs", 0),

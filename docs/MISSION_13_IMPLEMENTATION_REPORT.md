@@ -60,3 +60,18 @@ data/speedtest/
 | Architecture Kotlin et réseau Android | `docs/MISSION_13_ARCHITECTURE.md` (seams, plan T1→T10, arbitrages). |
 | Implémentation Jetpack Compose | UI + 6 tests instrumentés + 10 tests JVM (`SpeedTestPresentationTest`). |
 | Tests, sécurité et revue indépendante | `docs/MISSION_13_SECURITY_REVIEW.md` (5 findings SEC-01→05, revue Standards/Spec). |
+
+## 5. Additif de revue corrective (08/11/2026, branche `feature/mission-13-speedtest-reel`)
+
+Détails : `docs/MISSION_13_CORRECTION_REPORT.md`. Correction de la divergence Git sans force push
+(fusion de `develop`, résolution « version Mission 13 » sur 7 fichiers, diff `develop...HEAD`
+limité à la Mission 13), routage Wi-Fi exclusif par run (`WifiRoute` + `AndroidWifiNetworkRouteProvider`,
+sans `bindProcessToNetwork`), client frais par run contre la réutilisation d'un client annulé,
+download en réponse longue avec warm-up de 256 Kio exclu de la fenêtre, upload incompressible
+compté en octets écrits, jitter `moyenne |Δ|` sur les 5 sondes (`null` si < 2 sondes),
+latence sous charge repportée « indisponible », contrôle sur-cap également sur le résultat terminal,
+portée du backstop réécrite (filet sur le rapport ≠ garantie sur le fil).
+
+Preuves après correction : `./gradlew test assembleDebug` → **BUILD SUCCESSFUL**, **401 tests app,
+0 échec** (dont `SpeedTestReuseTest` 3/3, `SpeedTestRoutingTest` 3/3, `SpeedTestRepositoryBackstopTest`
+3/3). Aucun test réel vers Internet exécuté.

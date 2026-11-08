@@ -82,6 +82,10 @@ fun consumptionLine(result: SpeedTestResult?): String? =
 
 fun formatLatency(value: Long?): String = if (value == null) SpeedTestStrings.UNKNOWN else "$value ms"
 
+/** Jitter display: null is "indisponible", never a fake 0 ms. */
+fun formatJitter(value: Double?): String =
+    if (value == null || value.isNaN()) "indisponible" else "%.1f".format(value).replace('.', ',') + " ms (indicatif)"
+
 /**
  * Keeps only the host of a candidate target: no scheme, no credentials,
  * no port, no path, no query and no IP literal is ever displayed.

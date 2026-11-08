@@ -20,6 +20,9 @@ data class SpeedTestResult(
     val networkKey: String,
     val wifiLink: WifiLinkInfo?,
     val capturedAtWallMillis: Long,
+    /** Mean absolute gap between consecutive latency probes. Null if
+     * fewer than two probes succeeded or before this field existed. */
+    val jitterMillis: Double? = null,
 )
 
 /** The state of a run, observed by the ViewModel. */

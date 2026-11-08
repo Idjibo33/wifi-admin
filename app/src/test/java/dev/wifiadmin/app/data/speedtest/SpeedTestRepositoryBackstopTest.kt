@@ -79,4 +79,28 @@ class SpeedTestRepositoryBackstopTest {
         runCurrent()
         assertTrue(repository.state.value is SpeedTestState.Done)
     }
+
+    @Test fun `over cap bytes in the terminal result are failed`() = runTest {
+        val engine = object : SpeedTestEngine {
+            override val providerLabel = "silent-overcap"
+            override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
+                // No progress at all, but the terminal result claims
+                // bytes beyond the caps: still failed, never published.
+                return SpeedTestResult(1.0, 1.0, 1L, 99_000_000L, 0L, 1_000, false, "silent-overcap", "k", null, 1L)
+            }
+            override fun cancel() = Unit
+        }
+        val repository = SpeedTestRepository(
+            engine = engine,
+            monitor = FakeMonitor(wifi),
+            clock = TestAppClock(),
+            scope = this,
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        repository.start()
+        runCurrent()
+        val state = repository.state.value
+        assertTrue("STATE=$state", state is SpeedTestState.Failed)
+        assertEquals(SpeedTestFailure.Incomplete, (state as SpeedTestState.Failed).reason)
+    }
 }

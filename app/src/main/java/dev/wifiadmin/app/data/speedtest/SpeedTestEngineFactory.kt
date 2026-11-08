@@ -18,6 +18,7 @@ object SpeedTestEngineFactory {
         rawBaseUrl: String,
         policy: SpeedTestPolicy = SpeedTestPolicy(),
         clock: AppClock = SystemAppClock(),
+        routeProvider: WifiNetworkRouteProvider? = null,
     ): SpeedTestEngine {
         val endpoint = SpeedTestEndpointValidator.parse(rawBaseUrl)
             ?: return DisabledSpeedTestEngine()
@@ -31,9 +32,10 @@ object SpeedTestEngineFactory {
             .build()
         return LibreSpeedEngine(
             endpoint = endpoint,
-            client = LibreSpeedClient(httpClient, endpoint),
+            baseHttpClient = httpClient,
             policy = policy,
             clock = clock,
+            routeProvider = routeProvider,
         )
     }
 }

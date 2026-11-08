@@ -267,10 +267,13 @@ class SpeedTestRepository(
             }
             val result = withTimeout(policy.maxDurationMillis) {
                 engine.run { progress ->
-                    // Independent backstop (SEC-01): even a defective
-                    // engine cannot exceed the prepaid caps. The byte
-                    // counters traverse this wrapper, so the caps are
-                    // enforced whether or not the engine enforces them.
+                    // Backstop on the reported counters (SEC-01, scope):
+                    // this layer kills a run whose reported progress
+                    // exceeds the prepaid caps. It does NOT prove a
+                    // misbehaving engine never moved extra bytes on the
+                    // wire between progress events: only the engine's
+                    // own stream-byte cap guarantees that. Both layers
+                    // together cover reporting and wire.
                     val overDownload = progress.downloadBytes > policy.maxDownloadBytes
                     val overUpload = progress.uploadBytes > policy.maxUploadBytes
                     val overTotal = progress.downloadBytes + progress.uploadBytes >
@@ -281,6 +284,15 @@ class SpeedTestRepository(
                     }
                     publish(myGeneration, progress)
                 }
+            }
+            // Same check on the terminal result: an engine that never
+            // emitted progress but claims over-cap bytes at the end is
+            // failed instead of published.
+            if (result.downloadBytes > policy.maxDownloadBytes ||
+                result.uploadBytes > policy.maxUploadBytes
+            ) {
+                publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Incomplete))
+                return
             }
             // The real engine does not know the Wi-Fi identity: fill the
             // blank network key and link from the repository's own view.

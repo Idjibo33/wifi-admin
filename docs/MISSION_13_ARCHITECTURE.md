@@ -643,3 +643,17 @@ silence.
 *Document d'architecture : Mission 13 ne modifie aucun code — il produit `docs/MISSION_13_ARCHITECTURE.md` et, à
 l'issue de sa confirmation, les tranches T1–T10 en boucle rouge → vert, une tranche à la fois, sans aucun test réel vers
 Internet, sans toucher à `router-core`.*
+
+## Additif de revue corrective (08/11/2026)
+
+État implémenté (voir `docs/MISSION_13_CORRECTION_REPORT.md`) :
+
+- **§6.6 fermé** : routage Wi-Fi physique par run (`WifiRoute` : `socketFactory` + `Dns` via
+  `Network.getAllByName`), sans `bindProcessToNetwork` ; `null` → `NoWiFi` avant tout octet.
+  Conception `docs/MISSION_13_WIFI_ROUTING.md`, tests `SpeedTestRoutingTest`.
+- **Métrologie** : download en réponse longue (`ckSize` dimensionné au plafond) + warm-up
+  256 Kio exclu de la fenêtre mais compté au plafond/à la consommation ; upload PRNG
+  déterministe incompressible compté en octets écrits ; jitter `moyenne |Δ|` sur les
+  5 sondes ; latence sous charge « indisponible ». Conception `docs/MISSION_13_METROLOGY.md`.
+- **Réutilisation** : client frais par run + drapeau du moteur, `SpeedTestReuseTest` 3/3.
+- **Backstop** : progression + résultat terminal ; portée documentée à deux couches.

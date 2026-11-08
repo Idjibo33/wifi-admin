@@ -42,6 +42,17 @@ class SpeedTestCalculatorTest {
         assertNull(SpeedTestCalculator.medianLatencyMillis(emptyList()))
     }
 
+    @Test fun `jitter is the mean of consecutive gaps`() {
+        // Worked example from the spec: |22-20|=2, |25-22|=3, |30-25|=5, |40-30|=10.
+        // Expected value computed by hand here, never by the function tested.
+        assertEquals(5.0, SpeedTestCalculator.jitterMillis(listOf(20L, 22L, 25L, 30L, 40L))!!, 0.0001)
+    }
+
+    @Test fun `jitter with fewer than two probes is null`() {
+        assertNull(SpeedTestCalculator.jitterMillis(emptyList()))
+        assertNull(SpeedTestCalculator.jitterMillis(listOf(24L)))
+    }
+
     @Test fun `caps are hard limits`() {
         val policy = SpeedTestPolicy(maxDownloadBytes = 100, maxUploadBytes = 100)
         assertTrue(SpeedTestCalculator.isCapped(100, 0, policy))
