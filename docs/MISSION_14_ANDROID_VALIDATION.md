@@ -69,11 +69,35 @@ qui fait `reverse_proxy speedtest:8080`. La CA est **locale, debug-only** :
    docker compose --profile tls -f infra/librespeed-local/compose.yaml up -d
    curl --cacert infra/librespeed-local/tls/ca.crt https://127.0.0.1:8443/empty.php?r=12345 -v
    # LAN seulement après autorisation explicite : ports en 192.168.1.174:8443:8443
-   # (IP LAN concrete de wlp58s0, a confirmer le jour J ; jamais de CIDR 192.168.1.0/24
-   #  en host_ip, voir doc Docker "Publishing and exposing ports")
-   # puis filet DOCKER-USER limite au Pixel /32 + ufw allow from 192.168.1.115/32
-   # (ufw seul insuffisant : Docker contourne INPUT/OUTPUT via table nat).
+   # (IP LAN concrète de wlp58s0, à reconfirmer le jour J ; jamais de CIDR 192.168.1.0/24
+   #  en host_ip, voir doc Docker "Publishing and exposing ports". Pixel : IP relevée le jour J
+   #  via "$ADB shell ip addr show wlan0", à utiliser en /32, ex. 192.168.1.115/32.)
+   # puis filet DOCKER-USER STRICTEMENT limité à 8443 (sudo, DOCUMENTATION UNIQUEMENT — NE PAS EXÉCUTER) :
+   # Le paquet est déjà DNAT (nat DOCKER : 192.168.1.174:8443 → <IP_Caddy>:8443) à DOCKER-USER :
+   # -d 192.168.1.174 ne matchera JAMAIS ; --dport 8443 matche le port CONTENEUR (ici 1:1).
+   # Source Pixel (/32) et -i wlp58s0 restent matchés ; NEW = initiation, ESTABLISHED protecteur.
+   # Ordre : -I insère au sommet → insérer le DROP PUIS l'ACCEPT par-dessus.
+   # Ordre final : 1 = ACCEPT ESTABLISHED 8443, 2 = DROP !Pixel 8443.
+   # sudo iptables -I DOCKER-USER -i wlp58s0 -p tcp --dport 8443 ! -s 192.168.1.115/32 -j DROP
+   # sudo iptables -I DOCKER-USER -i wlp58s0 -p tcp --dport 8443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   # Vérification : sudo iptables -L DOCKER-USER -n --line-numbers -v
+   #                sudo iptables -t nat -L DOCKER -n --line-numbers
+   #                ss -ltn 'sport = :8443'  +  ss -ltn 'sport = :5433 or sport = :5434 or sport = :6379'
+   #                docker inspect wifiadmin-librespeed-local-caddy-1 --format '{{json .NetworkSettings.Ports}}'
+   # Suppression (même spec, -I → -D) :
+   # sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   # sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 ! -s 192.168.1.115/32 -j DROP
+   # + ufw allow from 192.168.1.115/32 to any port 8443 proto tcp (documentation, insuffisant seul :
+   # Docker contourne INPUT/OUTPUT via table nat, chaînes FORWARD/DOCKER-USER).
+   # Les règles DOCKER-USER disparaissent au redémarrage de Docker : à réappliquer à chaque fenêtre.
    ```
+   Note test HTTPS (`SpeedTestHttpsPingInstrumentedTest`) : un `Assume` peut **ignorer**
+   (`skip` motivé) si `SPEEDTEST_BASE_URL` n’est pas `https`, si le Pixel n’est pas sur le Wi-Fi attendu
+   (`LocalWifi`), si l’endpoint est invalide ou sans route Wi-Fi — ce n’est pas un échec.
+   Il nécessite une exécution dédiée : `docker compose --profile tls` démarré, CA debug présente,
+   build avec `-Pwifiadmin.speedtestBaseUrl=https://[IP-LAN]:8443`, puis
+   `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.wifiadmin.app.data.speedtest.SpeedTestHttpsPingInstrumentedTest -Pwifiadmin.speedtestBaseUrl=https://[IP-LAN]:8443`.
+   Aucun test de débit réel (jusqu’à 20/10 Mo) ne remplace ce ping `empty.php` sans autorisation explicite.
 
    Résultat observé sur la boucle (2026-11-08) : `curl --cacert … → code=200`,
    `sans CA → code=000 "unable to get local issuer certificate"` (échec attendu),
@@ -85,6 +109,10 @@ qui fait `reverse_proxy speedtest:8080`. La CA est **locale, debug-only** :
 
    ```bash
    docker compose --profile tls -f infra/librespeed-local/compose.yaml down
+   sudo iptables -L DOCKER-USER -n --line-numbers -v   # relever les <num> si suppression par numéro
+   sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 ! -s 192.168.1.115/32 -j DROP
+   sudo iptables -L DOCKER-USER -n --line-numbers -v   # confirmer l'absence
    sudo ufw status numbered   # relever le <num> puis :
    sudo ufw delete <num>
    sudo ufw status numbered   # confirmer la suppression

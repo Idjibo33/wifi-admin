@@ -129,17 +129,45 @@ Avantage : aucune ouverture LAN, aucune CA. Limite : le dialecte loopback de
    ```bash
    docker compose --profile tls -f infra/librespeed-local/compose.yaml up -d
    curl --cacert infra/librespeed-local/tls/ca.crt https://127.0.0.1:8443/empty.php?r=12345 -v
-   # LAN seulement apres autorisation explicite :
+   # LAN seulement après autorisation explicite :
    # 1) Dans compose.yaml, remplacer (profil tls uniquement) :
    #    ports:
-   #      - "192.168.1.174:8443:8443"   # IP LAN concrete de wlp58s0, a confirmer le jour J
-   #    (JAMAIS de CIDR 192.168.1.0/24 en host_ip : host_ip = adresse unique, voir doc Docker.)
-   # 2) Appliquer le filet DOCKER-USER limite au Pixel /32 (sudo, voir Voie B §4) :
-   #    sudo iptables -I DOCKER-USER -i wlp58s0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-   #    sudo iptables -I DOCKER-USER -i wlp58s0 ! -s 192.168.1.115/32 -j DROP
-   #    (Alternative : ipset de sources autorisees + DROP.)
-   # 3) Completer par UFW limite au meme /32 (documentation, insuffisant seul) :
+   #      - "192.168.1.174:8443:8443"   # IP LAN concrète de wlp58s0, à reconfirmer le jour J
+   #    (JAMAIS de CIDR 192.168.1.0/24 en host_ip : host_ip = adresse unique, voir doc Docker
+   #    "Publishing and exposing ports". Ne jamais committer une IP codée en dur sans re-vérification.)
+   # 2) Appliquer le filet DOCKER-USER strictement limité à 8443 (sudo, DOCUMENTATION UNIQUEMENT
+   #    — NE PAS EXÉCUTER sans autorisation explicite).
+   #    Le paquet est déjà DNAT (nat DOCKER : 192.168.1.174:8443 → <IP_Caddy>:8443) à DOCKER-USER :
+   #    -d 192.168.1.174 ne matchera JAMAIS ; --dport 8443 matche le port CONTENEUR (ici 1:1).
+   #    Source Pixel (/32, à re-relever via "$ADB shell ip addr show wlan0" le jour J) et -i wlp58s0
+   #    restent matchés ; l'état NEW est l'initiation, ESTABLISHED protège les flux en cours.
+   #    ATTENTION à l'ordre : -I insère au sommet, donc insérer le DROP PUIS l'ACCEPT par-dessus.
+   #    Ordre final : 1 = ACCEPT ESTABLISHED 8443, 2 = DROP !Pixel 8443.
+   #    sudo iptables -I DOCKER-USER -i wlp58s0 -p tcp --dport 8443 ! -s 192.168.1.115/32 -j DROP
+   #    sudo iptables -I DOCKER-USER -i wlp58s0 -p tcp --dport 8443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   #    (Renfort optionnel : ajouter -d <IP_Caddy> relevée par docker inspect, à rafraîchir après chaque down/up.
+   #    Ne jamais utiliser -d 192.168.1.174.)
+   #    Vérification (avant tout test) :
+   #    sudo iptables -L DOCKER-USER -n --line-numbers -v
+   #    sudo iptables -t nat -L DOCKER -n --line-numbers
+   #    ss -ltn 'sport = :8443'   # → 192.168.1.174:8443 attendu en LAN
+   #    ss -ltn 'sport = :5433 or sport = :5434 or sport = :6379'  # → toujours écoutés (non-régression)
+   #    docker inspect wifiadmin-librespeed-local-caddy-1 --format '{{json .NetworkSettings.Ports}}'
+   #    Suppression (même spec, -I → -D) :
+   #    sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   #    sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 ! -s 192.168.1.115/32 -j DROP
+   #    sudo iptables -L DOCKER-USER -n --line-numbers -v  # confirmer l'absence
+   #    Les règles sont effacées au redémarrage de Docker : à réappliquer à chaque fenêtre.
+   # 3) Compléter par UFW limité au même /32 (documentation, insuffisant seul — Docker contourne
+   #    INPUT via FORWARD/DOCKER-USER) :
    #    sudo ufw allow from 192.168.1.115/32 to any port 8443 proto tcp comment 'WiFi Admin LibreSpeed dev'
+   #    sudo ufw status numbered  # puis : sudo ufw delete <num>
+   # Note test HTTPS (`SpeedTestHttpsPingInstrumentedTest`, `app/src/androidTest/.../SpeedTestHttpsPingInstrumentedTest.kt`) :
+   # un `Assume` peut **ignorer** (`skip` motivé) si `SPEEDTEST_BASE_URL` n’est pas `https`, si le Pixel n’est pas sur le Wi-Fi attendu
+   # (`LocalWifi`), si l’endpoint est invalide ou sans route Wi-Fi — ce n’est pas un échec. Il nécessite une exécution dédiée :
+   # `docker compose --profile tls` démarré, CA debug présente, build avec `-Pwifiadmin.speedtestBaseUrl=https://[IP-LAN]:8443`,
+   # puis `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.wifiadmin.app.data.speedtest.SpeedTestHttpsPingInstrumentedTest -Pwifiadmin.speedtestBaseUrl=https://[IP-LAN]:8443`.
+   # Aucun test de débit réel (jusqu’à 20/10 Mo) ne remplace ce ping `empty.php` sans autorisation explicite.
    ```
 
    Vérifier le SAN (`openssl x509 -in infra/librespeed-local/tls/cert.pem -noout -text | grep -A1 "Subject Alternative Name"`)
@@ -150,6 +178,10 @@ Avantage : aucune ouverture LAN, aucune CA. Limite : le dialecte loopback de
 
    ```bash
    docker compose --profile tls -f infra/librespeed-local/compose.yaml down
+   sudo iptables -L DOCKER-USER -n --line-numbers -v   # relever les <num> si suppression par numéro
+   sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   sudo iptables -D DOCKER-USER -i wlp58s0 -p tcp --dport 8443 ! -s 192.168.1.115/32 -j DROP
+   sudo iptables -L DOCKER-USER -n --line-numbers -v   # confirmer l'absence
    sudo ufw status numbered   # relever le <num> puis :
    sudo ufw delete <num>
    sudo ufw status numbered   # confirmer la suppression
