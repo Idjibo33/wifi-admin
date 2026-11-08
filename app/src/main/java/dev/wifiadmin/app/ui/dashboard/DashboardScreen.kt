@@ -324,7 +324,7 @@ internal fun DashboardContent(
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         Text(
-                            text = "Mesure le débit Internet via le Wi-Fi (débits réels, plafonds 20/10 Mo, 30 s).",
+                            text = "Mesure Internet indisponible dans cette version ; liaison Wi-Fi disponible.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )

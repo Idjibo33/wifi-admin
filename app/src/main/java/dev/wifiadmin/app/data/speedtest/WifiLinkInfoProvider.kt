@@ -3,7 +3,12 @@ package dev.wifiadmin.app.data.speedtest
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.wifi.ScanResult
 import android.net.wifi.WifiInfo
+import android.os.Build
+
+/** Where a link-speed value comes from. */
+enum class LinkSpeedSource { WIFI_RX, WIFI_LEGACY, NETWORK_CAPABILITIES_ESTIMATE }
 
 /**
  * What the phone knows about its Wi-Fi link, when Android allows it.
@@ -18,21 +23,50 @@ data class WifiLinkInfo(
     val frequencyMhz: Int?,
     val bandLabel: String?,
     val wifiStandard: String?,
+    val linkSpeedSource: LinkSpeedSource? = null,
+    val isLinkSpeedEstimate: Boolean =
+        linkSpeedSource == LinkSpeedSource.NETWORK_CAPABILITIES_ESTIMATE,
+    val txLinkSpeedMbps: Int? = null,
 )
+
+// Band edges from AOSP ScanResult.java (BAND_*_FREQ_MHZ are @hide).
+private const val BAND_24_START = 2412
+private const val BAND_24_END = 2484
+private const val BAND_5_START = 5160
+private const val BAND_5_END = 5885
+private const val BAND_6_START = 5955
+private const val BAND_6_END = 7115
+private const val BAND_6_CLASS_136 = 5935
+private const val BAND_60_START = 58320
+private const val BAND_60_END = 70200
+
+fun is6GHzBand(frequencyMhz: Int?): Boolean =
+    frequencyMhz != null && (frequencyMhz == BAND_6_CLASS_136 || frequencyMhz in BAND_6_START..BAND_6_END)
 
 fun frequencyBandLabel(frequencyMhz: Int?): String? = when (frequencyMhz) {
     null -> null
-    in 2400..2500 -> "2,4 GHz"
-    in 4900..5925 -> "5 GHz"
-    in 5925..7125 -> "6 GHz"
+    in BAND_24_START..BAND_24_END -> "2,4 GHz"
+    in BAND_5_START..BAND_5_END -> "5 GHz"
+    in BAND_6_START..BAND_6_END -> "6 GHz"
+    BAND_6_CLASS_136 -> "6 GHz"
+    in BAND_60_START..BAND_60_END -> "60 GHz (WiGig)"
     else -> null
 }
 
-fun wifiStandardLabel(value: Int): String? = when (value) {
-    4 -> "Wi-Fi 5"
-    5 -> "Wi-Fi 6"
-    6 -> "Wi-Fi 6E"
-    7 -> "Wi-Fi 7"
+/**
+ * Totally public, JVM-testable: [value] is a ScanResult.WIFI_STANDARD_*
+ * constant (compile-time inlined, no Android runtime).
+ * Wi-Fi 6E is 11AX on the 6 GHz band, hence [frequencyMhz] discriminates.
+ */
+fun wifiStandardLabel(value: Int, frequencyMhz: Int? = null): String? = when (value) {
+    ScanResult.WIFI_STANDARD_UNKNOWN -> null
+    ScanResult.WIFI_STANDARD_LEGACY -> "802.11a/b/g"
+    ScanResult.WIFI_STANDARD_11N -> "Wi-Fi 4 (802.11n)"
+    ScanResult.WIFI_STANDARD_11AC -> "Wi-Fi 5 (802.11ac)"
+    ScanResult.WIFI_STANDARD_11AX ->
+        if (is6GHzBand(frequencyMhz)) "Wi-Fi 6E (802.11ax, 6 GHz)" else "Wi-Fi 6 (802.11ax)"
+    ScanResult.WIFI_STANDARD_11AD -> "WiGig (802.11ad, 60 GHz)"
+    ScanResult.WIFI_STANDARD_11BE -> "Wi-Fi 7 (802.11be)"
     else -> null
 }
 
@@ -57,18 +91,45 @@ class AndroidWifiLinkInfoProvider(
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return null
 
         val info = runCatching { caps.getTransportInfo() as? WifiInfo }.getOrNull()
-        // Link speed: NetworkCapabilities downstream bandwidth (Kbps) or WifiInfo.
-        val linkSpeed = runCatching {
-            val kbps = caps.getLinkDownstreamBandwidthKbps()
-            if (kbps > 0) kbps / 1000 else null
-        }.getOrNull() ?: info?.let {
-            @Suppress("DEPRECATION")
-            it.linkSpeed.takeIf { speed -> speed > 0 }
+
+        var linkSpeed: Int? = null
+        var source: LinkSpeedSource? = null
+        var tx: Int? = null
+        if (info != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val rx = info.rxLinkSpeedMbps.takeIf { it != WifiInfo.LINK_SPEED_UNKNOWN && it > 0 }
+            if (rx != null) {
+                linkSpeed = rx
+                source = LinkSpeedSource.WIFI_RX
+            }
+            tx = info.txLinkSpeedMbps.takeIf { it != WifiInfo.LINK_SPEED_UNKNOWN && it > 0 }
         }
-        val frequency = info?.frequency?.takeIf { it != null && it > 0 }
-        val rssi = info?.rssi?.takeIf { it != null && it > -9999 }
-        val standard = info?.let {
-            runCatching { wifiStandardLabel(it.wifiStandard) }.getOrNull()
+        if (linkSpeed == null && info != null) {
+            @Suppress("DEPRECATION")
+            val legacy = info.linkSpeed.takeIf { it != WifiInfo.LINK_SPEED_UNKNOWN && it > 0 }
+            if (legacy != null) {
+                linkSpeed = legacy
+                source = LinkSpeedSource.WIFI_LEGACY
+            }
+        }
+        if (linkSpeed == null) {
+            // Last resort: first-hop bandwidth ESTIMATE (Kbps), not
+            // a negotiated PHY rate. 0 means unspecified ("@hide").
+            val estimated = runCatching {
+                caps.getLinkDownstreamBandwidthKbps().takeIf { it > 0 }?.let { it / 1000 }
+            }.getOrNull()
+            if (estimated != null) {
+                linkSpeed = estimated
+                source = LinkSpeedSource.NETWORK_CAPABILITIES_ESTIMATE
+            }
+        }
+
+        val frequency = info?.frequency?.takeIf { it > 0 }
+        // -127 is AOSP's INVALID_RSSI sentinel.
+        val rssi = info?.rssi?.takeIf { it > -127 }
+        val standard = if (info != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { wifiStandardLabel(info.wifiStandard, frequency) }.getOrNull()
+        } else {
+            null
         }
         return WifiLinkInfo(
             linkSpeedMbps = linkSpeed,
@@ -76,6 +137,9 @@ class AndroidWifiLinkInfoProvider(
             frequencyMhz = frequency,
             bandLabel = frequencyBandLabel(frequency),
             wifiStandard = standard,
+            linkSpeedSource = source,
+            isLinkSpeedEstimate = source == LinkSpeedSource.NETWORK_CAPABILITIES_ESTIMATE,
+            txLinkSpeedMbps = tx,
         )
     }
 }

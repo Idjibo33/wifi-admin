@@ -32,7 +32,7 @@ data class SpeedTestUiState(
     val uploadMbps: Double? = null,
     val latencyMillis: Long? = null,
     val result: SpeedTestResult? = null,
-    val failure: SpeedTestFailure? = null,
+    val failure: SpeedTestFailure? = SpeedTestFailure.Disabled,
     val wifiLink: WifiLinkInfo? = null,
     val hasConsented: Boolean = false,
     val showConsent: Boolean = false,
@@ -103,12 +103,12 @@ class SpeedTestViewModel(
             }
         }
         viewModelScope.launch {
+            repository.watchNetworkLoss().collect { }
+        }
+        viewModelScope.launch {
             monitor.observeStatus().collect { status ->
                 val ok = status is LocalNetworkStatus.LocalWifi
                 _state.value = _state.value.copy(isNetworkOk = ok)
-                if (!ok && repository.isRunning) {
-                    repository.cancel(CancelReason.NETWORK_LOST)
-                }
                 if (ok) {
                     _state.value = _state.value.copy(wifiLink = linkProvider?.current())
                 }

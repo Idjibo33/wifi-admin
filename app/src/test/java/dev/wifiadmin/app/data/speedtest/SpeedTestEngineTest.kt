@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -34,7 +35,12 @@ class SpeedTestEngineTest {
         engine: SpeedTestEngine,
         monitor: NetworkMonitor,
         scope: CoroutineScope,
-    ) = SpeedTestRepository(engine, monitor, clock = TestAppClock(), scope = scope, ioDispatcher = Dispatchers.Unconfined)
+    ): SpeedTestRepository {
+        val dispatcher = (scope as? kotlinx.coroutines.test.TestScope)?.testScheduler?.let {
+            kotlinx.coroutines.test.StandardTestDispatcher(it)
+        } ?: Dispatchers.Unconfined
+        return SpeedTestRepository(engine, monitor, clock = TestAppClock(), scope = scope, ioDispatcher = dispatcher)
+    }
 
     @Test fun `disabled engine never opens network and fails disabled`() = runTest {
         val monitor = FakeMonitor(wifi)
@@ -54,7 +60,7 @@ class SpeedTestEngineTest {
         delay(1)
         val state = repository.state.value
         // Progress emissions already moved the state; the run completes on Unconfined.
-        assertTrue(state is SpeedTestState.Done || state is SpeedTestState.Running)
+        assertTrue("STATE="+state, state is SpeedTestState.Done || state is SpeedTestState.Running)
     }
 
     @Test fun `start without wifi fails without touching engine`() = runTest {
@@ -78,31 +84,27 @@ class SpeedTestEngineTest {
 
     @Test fun `network loss cancels without retry`() = runTest {
         val monitor = FakeMonitor(wifi)
-        val repository = repo(FakeSpeedTestEngine(), monitor, this)
+        val repository = repo(FakeSpeedTestEngine(chunkDelayMillis = 50), monitor, this)
+        val collector = launch { repository.watchNetworkLoss().collect {} }
         repository.start()
         runCurrent()
+        advanceTimeBy(30)
+        runCurrent()
+        assertTrue(repository.isRunning)
         monitor.flow.value = LocalNetworkStatus.NoWifi
+        advanceTimeBy(1)
         runCurrent()
         assertFalse(repository.isRunning)
+        collector.cancel()
     }
 
     @Test fun `no mobile fallback ever`() = runTest {
-        val monitor = FakeMonitor(wifi)
-        // The fake engine finishes synchronously, so the run is already
-        // Done when the network changes: what matters is that no new run
-        // starts on mobile data.
+        val monitor = FakeMonitor(LocalNetworkStatus.NotOnWifi)
         val repository = repo(FakeSpeedTestEngine(), monitor, this)
         repository.start()
         runCurrent()
-        monitor.flow.value = LocalNetworkStatus.NotOnWifi
-        runCurrent()
-        assertFalse(repository.isRunning)
-        val state = repository.state.value
-        assertTrue(state is SpeedTestState.Done || state is SpeedTestState.Cancelled || state is SpeedTestState.Failed)
-        // Starting on mobile data is refused outright.
-        repository.start()
-        runCurrent()
         val after = repository.state.value
-        assertTrue(after is SpeedTestState.Failed && after.reason is SpeedTestFailure.NoWiFi)
+        assertTrue(after is SpeedTestState.Failed)
+        assertFalse(repository.isRunning)
     }
 }

@@ -3,12 +3,15 @@ package dev.wifiadmin.app.data.speedtest
 import dev.wifiadmin.app.data.AppClock
 import dev.wifiadmin.app.data.LocalNetworkStatus
 import dev.wifiadmin.app.data.NetworkMonitor
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +19,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 
 /**
  * The measurement engine.
@@ -72,6 +76,7 @@ class FakeSpeedTestEngine(
     private val failMidway: Boolean = false,
     private val networkKey: String = "simulated|simulated|simulated",
     private val wifiLink: WifiLinkInfo? = null,
+    private val chunkDelayMillis: Long = 100L,
 ) : SpeedTestEngine {
 
     override val providerLabel: String = providerLabelFake
@@ -81,6 +86,8 @@ class FakeSpeedTestEngine(
     @Volatile private var cancelled = false
 
     fun clearCounters() { runCount.set(0); totalBytes.set(0) }
+    fun runCountSnapshot(): Long = runCount.get()
+    fun totalBytesSnapshot(): Long = totalBytes.get()
 
     override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
         runCount.incrementAndGet()
@@ -95,18 +102,22 @@ class FakeSpeedTestEngine(
         var dl = 0L
         val chunk = 256L * 1024
         while (dl < dlTarget) {
+            currentCoroutineContext().ensureActive()
             if (!ensureActive()) throw CancellationException("cancelled")
             if (failMidway && dl > dlTarget / 2) throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
             dl += chunk; totalBytes.addAndGet(chunk)
             onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = dl))
+            if (chunkDelayMillis > 0) delay(chunkDelayMillis)
         }
         onProgress(SpeedTestState.Running(SpeedTestPhase.UPLOAD, downloadMbps = 42.0))
         var ul = 0L
         val ulTarget = policy.maxUploadBytes / 4
         while (ul < ulTarget) {
+            currentCoroutineContext().ensureActive()
             if (!ensureActive()) throw CancellationException("cancelled")
             ul += chunk; totalBytes.addAndGet(chunk)
             onProgress(SpeedTestState.Running(SpeedTestPhase.UPLOAD, uploadBytes = ul))
+            if (chunkDelayMillis > 0) delay(chunkDelayMillis)
         }
 
         val elapsed = if (clock != null) (clock.monotonicMillis() - start).coerceAtLeast(1_000L) else 8_000L
@@ -148,90 +159,98 @@ class SpeedTestRepository(
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
     private val policy: SpeedTestPolicy = SpeedTestPolicy(),
 ) {
-    private val mutex = Mutex()
-    private var running: Job? = null
-    private var generation = 0
-    private var startNetworkKey: String? = null
+    private val lock = Any()
+    private val generation = AtomicInteger(0)
+    @Volatile private var runJob: Job? = null
+    @Volatile private var startNetworkKey: String? = null
 
     private val _state = MutableStateFlow<SpeedTestState>(SpeedTestState.Idle)
     val state = _state.asStateFlow()
 
-    val isRunning: Boolean get() = running?.isActive == true
+    val isRunning: Boolean get() = runJob?.isActive == true
 
     /**
      * Starts one test. Returns immediately; progress is observed through
-     * [state]. A second start while one is running is refused as
-     * [SpeedTestFailure.TooBusy] without touching the first test.
+     * [state]. A second start while one is running leaves the running
+     * test untouched (single flight).
      */
     fun start() {
-        scope.launch(ioDispatcher) {
-            mutex.withLock {
-                if (running?.isActive == true) {
-                    _state.value = SpeedTestState.Failed(SpeedTestFailure.TooBusy)
-                    return@launch
-                }
-                val status = monitor.currentStatus()
-                if (status !is LocalNetworkStatus.LocalWifi) {
-                    _state.value = SpeedTestState.Failed(SpeedTestFailure.NoWiFi)
-                    return@launch
-                }
-                startNetworkKey = status.identity.key
-                generation++
-                _state.value = SpeedTestState.Running(SpeedTestPhase.CHECKING_NETWORK)
+        val status = try {
+            monitor.currentStatus()
+        } catch (t: Throwable) {
+            _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
+            return
+        }
+        if (status !is LocalNetworkStatus.LocalWifi) {
+            _state.value = SpeedTestState.Failed(SpeedTestFailure.NoWiFi)
+            return
+        }
+        val myGeneration: Int
+        synchronized(lock) {
+            if (runJob?.isActive == true) {
+                return
             }
+            myGeneration = generation.incrementAndGet()
+            startNetworkKey = status.identity.key
+            _state.value = SpeedTestState.Running(SpeedTestPhase.CHECKING_NETWORK)
+            runJob = scope.launch(ioDispatcher) { run(myGeneration) }
+        }
+    }
 
-            val myGeneration = generation
-            val job = Job()
-            mutex.withLock { running = job }
-            try {
-                val result = engine.run { progress ->
-                    if (myGeneration == generation) {
-                        _state.value = progress
-                    }
+    private suspend fun run(myGeneration: Int) {
+        try {
+            val result = withTimeout(policy.maxDurationMillis) {
+                engine.run { progress ->
+                    if (myGeneration == generation.get()) _state.value = progress
                 }
-                if (myGeneration == generation) {
-                    _state.value = SpeedTestState.Done(result)
-                }
-            } catch (e: SpeedTestFailureException) {
-                if (myGeneration == generation) {
-                    _state.value = SpeedTestState.Failed(e.failure)
-                }
-            } catch (e: CancellationException) {
-                if (myGeneration == generation) {
-                    _state.value = SpeedTestState.Cancelled
-                }
-                throw e
-            } finally {
-                engine.cancel()
-                mutex.withLock {
-                    if (running === job) running = null
-                }
+            }
+            if (myGeneration == generation.get()) _state.value = SpeedTestState.Done(result)
+        } catch (e: TimeoutCancellationException) {
+            if (myGeneration == generation.get()) _state.value = SpeedTestState.Failed(SpeedTestFailure.Timeout)
+        } catch (e: SpeedTestFailureException) {
+            if (myGeneration == generation.get()) _state.value = SpeedTestState.Failed(e.failure)
+        } catch (e: CancellationException) {
+            if (myGeneration == generation.get()) _state.value = SpeedTestState.Cancelled
+            throw e
+        } catch (t: Throwable) {
+            if (myGeneration == generation.get()) _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
+        } finally {
+            engine.cancel()
+            synchronized(lock) {
+                if (runJob?.isActive == true && runJob === null) runJob = null
+                // The job clears itself when inactive; if this job ended, clear.
+                if (runJob != null && !runJob!!.isActive) runJob = null
             }
         }
     }
 
-    /** Cancels the current test, its sockets and its callbacks. */
+    /** Cancels the running test, its sockets and its callbacks. */
     fun cancel(reason: CancelReason = CancelReason.USER) {
-        engine.cancel()
-        running?.cancel()
-        generation++
-        if (reason == CancelReason.USER) {
-            _state.value = SpeedTestState.Cancelled
+        val job: Job?
+        synchronized(lock) {
+            job = runJob
+            if (job?.isActive != true) return
+            generation.incrementAndGet()
         }
+        engine.cancel()
+        job?.cancel()
+        if (reason == CancelReason.USER) _state.value = SpeedTestState.Cancelled
     }
 
-    /** A cold flow that cancels the test when the network leaves Wi-Fi. */
+    /** A cold flow that cancels the test when the network leaves Wi-Fi or changes identity. */
     fun watchNetworkLoss(): Flow<Unit> = callbackFlow {
-        val job = scope.launch {
+        val job = launch {
             monitor.observeStatus().collect { status ->
-                if (isRunning && status !is LocalNetworkStatus.LocalWifi) {
-                    cancel(CancelReason.NETWORK_LOST)
-                    send(Unit)
-                } else if (isRunning && status is LocalNetworkStatus.LocalWifi &&
+                if (!isRunning) return@collect
+                val lost = status !is LocalNetworkStatus.LocalWifi
+                val changed = status is LocalNetworkStatus.LocalWifi &&
                     status.identity.key != startNetworkKey
-                ) {
+                if (lost) {
+                    cancel(CancelReason.NETWORK_LOST)
+                    trySend(Unit)
+                } else if (changed) {
                     cancel(CancelReason.NETWORK_CHANGED)
-                    send(Unit)
+                    trySend(Unit)
                 }
             }
         }

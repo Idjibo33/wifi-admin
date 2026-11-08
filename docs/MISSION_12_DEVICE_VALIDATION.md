@@ -24,7 +24,7 @@ Stocké hors puce, `docs/screenshots/mission-12/mission12_screenshots/` (4 PNG) 
 | `DevicesListInstrumentedTest` | 14 OK |
 | `DeviceAccessibilityInstrumentedTest` + `SessionExpiryInstrumentedTest` + `NavigationInstrumentedTest` | 3 + 4 + 3 OK |
 | `SpeedTestInstrumentedTest` | 5 OK |
-| JVM (`router-core`, `poc-cli`, `app`) | 339 tests, 0 échec |
+| JVM (`router-core` 193 + `poc-cli` 56 + `app` 352 dont 30 speedtest) | 601 tests au total, 0 échec |
 | FakeRouter | pare-feu 10/10, expiration 3/3, aucune écriture |
 
 Suite complète 54 tests non lancée d'un bloc (polling 30 s) ; `NetworkChangeInstrumentedTest`

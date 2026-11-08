@@ -29,9 +29,10 @@ déclenchés par le test.
 - Écran « Test de vitesse » (destination protégée, retour flèche, sans nouvel onglet) avec hero
   réseau, jauge Mbps, actions Lancer/Annuler/Relancer, résultats Download/Upload/Latence/date,
   liaison Wi-Fi, notice d'impossibilité et liens externes manuels.
-- Liaison Wi-Fi en lecture seule : débit négocié (`NetworkCapabilities` downstream, fallback
-  `WifiInfo` rate), RSSI + `SignalBars`, fréquence + bande, standard Wi-Fi 5/6/6E/7 ; valeur
-  inconnue = « indisponible », jamais 0.
+- Liaison Wi-Fi en lecture seule (revue corrective) : débit négocié `WifiInfo`
+  Rx/Tx (API 29+) puis legacy, estimation `NetworkCapabilities` marquée « estimation »,
+  RSSI + `SignalBars`, fréquence + bande officielle, standard `ScanResult` (4/5/6/6E par la
+  bande/WiGig/7) ; inconnu = « indisponible », jamais 0.
 - Historique local `SpeedTestPreferencesStore` (consentement + 20 résultats, 30 jours) ; aucun
   mot de passe, session, token, MAC, SSID ou IP publique stockée.
 - Moteur réel désactivé : l'utilisateur voit « indisponible » avec l'explication et les liens
@@ -65,10 +66,11 @@ Single-flight (`Mutex` + `Job` + `generation`), annulation coopérative (`ensure
 
 ## 6. Tests
 
-- JVM : `SpeedTestCalculatorTest` (12), `SpeedTestEngineTest` (5 : disabled, fake, no-WiFi,
-  perte, pas de mobile), `Mission12BoundaryTest` (6 : séparation, aucun endpoint en données,
+- JVM : `SpeedTestCalculatorTest` (12), `SpeedTestEngineTest` (5), `WifiStandardLabelTest` (8),
+  `SpeedTestRepositoryConcurrencyTest` (5 : single-flight, cancel suspendu, vieille complétion,
+  exception inattendue, identité réseau), `Mission12BoundaryTest` (6 : séparation, aucun endpoint en données,
   plafonds, pas de localisation, pas de secret, route protégée). Suite complète :
-  `router-core` + `poc-cli` + `app` — 339 tests, 0 échec.
+  `router-core` (193) + `poc-cli` (56) + `app` (352, dont 30 speedtest) — 601 tests au total, 0 échec.
 - Instrumentés : `SpeedTestInstrumentedTest` (5 : prêt sombre, en cours clair, erreur sombre,
   résultat sombre, bouton cliquable) + captures Pixel 7 Pro falsifiées (`docs/screenshots/mission-12/`).
 - Non-régression : `fake_router_scenarios.py` 10/10, `fake_router_expiry_scenarios.py` 3/3,

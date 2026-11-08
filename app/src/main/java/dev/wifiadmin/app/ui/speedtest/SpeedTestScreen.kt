@@ -155,6 +155,31 @@ fun SpeedTestContent(
             }
         }
 
+        item(key = "disabled") {
+            Card(
+                modifier = Modifier.fillMaxWidth()
+                    .semantics { liveRegion = LiveRegionMode.Assertive },
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(WifiDims.Space4)) {
+                    Text(
+                        text = SpeedTestStrings.DISABLED,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.size(WifiDims.Space2))
+                    Text(
+                        text = SpeedTestStrings.DISABLED_BODY,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    ExternalLinks()
+                }
+            }
+        }
+
         item(key = "gauge") {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -199,7 +224,7 @@ fun SpeedTestContent(
                         val label = if (state.previousResult != null) "Relancer" else "Lancer le test"
                         Button(
                             onClick = onStart,
-                            enabled = state.isNetworkOk && state.failure !is SpeedTestFailure.Disabled,
+                            enabled = false,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = WifiDims.FieldMin)
                                 .testTag("speedtest_start_button"),
@@ -209,36 +234,21 @@ fun SpeedTestContent(
             }
         }
 
-        if (state.failure != null) {
+        if (state.failure != null && state.failure !is SpeedTestFailure.Disabled) {
             item(key = "error") {
                 Card(
                     modifier = Modifier.fillMaxWidth()
                         .semantics { liveRegion = LiveRegionMode.Assertive },
                     colors = CardDefaults.cardColors(
-                        containerColor = when (state.failure) {
-                            SpeedTestFailure.Disabled -> MaterialTheme.colorScheme.secondaryContainer
-                            else -> MaterialTheme.colorScheme.errorContainer
-                        }
+                        containerColor = MaterialTheme.colorScheme.errorContainer
                     )
                 ) {
                     Column(modifier = Modifier.padding(WifiDims.Space4)) {
                         Text(
                             text = failureMessage(state.failure!!),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = when (state.failure) {
-                                SpeedTestFailure.Disabled -> MaterialTheme.colorScheme.onSecondaryContainer
-                                else -> MaterialTheme.colorScheme.onErrorContainer
-                            },
+                            color = MaterialTheme.colorScheme.onErrorContainer,
                         )
-                        if (state.failure is SpeedTestFailure.Disabled) {
-                            Spacer(Modifier.size(WifiDims.Space2))
-                            Text(
-                                text = SpeedTestStrings.DISABLED_BODY,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                            ExternalLinks()
-                        }
                     }
                 }
             }
