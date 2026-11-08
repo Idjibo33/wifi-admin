@@ -60,10 +60,18 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./tls:/certs:ro
     # Par defaut, ecoute boucle locale uniquement. Pour l'acces LAN Pixel,
-    # modifier apres autorisation explicite en :
-    # ports: ["192.168.1.0/24:8443:8443"]  (voir README).
+    # apres autorisation explicite UNIQUEMENT, binder sur l'IP LAN concrete
+    # de wlp58s0 (exemple labo ci-dessous, A CONFIRMER le jour J : l'IP
+    # DHCP peut varier) + restreindre la source via DOCKER-USER
+    # (ufw seul NE bloque pas un port publie par Docker — voir README).
+    # Ne JAMAIS utiliser de CIDR ici (ex. 192.168.1.0/24) : host_ip doit
+    # etre une adresse IPv4 unique bindable. Voir doc Docker officielle
+    # "Publishing and exposing ports" (HOST_IP:HOST_PORT:CONTAINER_PORT).
     ports:
       - "127.0.0.1:8443:8443"
+      # Exemple LAN si et seulement si autorisation : decommenter en
+      # remplacant 192.168.1.174 par l'IP LAN reelle du jour J :
+      # - "192.168.1.174:8443:8443"
     # Caddy force HTTPS sur 443 interne ; le port 8443 externe entraine
     # une redirection 308 vers https://...:443. Pour la validation via
     # https://127.0.0.1:8443, configurer Caddy en tls internal ou

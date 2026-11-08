@@ -68,8 +68,11 @@ qui fait `reverse_proxy speedtest:8080`. La CA est **locale, debug-only** :
    ```bash
    docker compose --profile tls -f infra/librespeed-local/compose.yaml up -d
    curl --cacert infra/librespeed-local/tls/ca.crt https://127.0.0.1:8443/empty.php?r=12345 -v
-   # LAN seulement après autorisation : ports en [IP-LAN]:8443:8443 puis
-   # sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp comment 'WiFi Admin LibreSpeed dev'
+   # LAN seulement après autorisation explicite : ports en 192.168.1.174:8443:8443
+   # (IP LAN concrete de wlp58s0, a confirmer le jour J ; jamais de CIDR 192.168.1.0/24
+   #  en host_ip, voir doc Docker "Publishing and exposing ports")
+   # puis filet DOCKER-USER limite au Pixel /32 + ufw allow from 192.168.1.115/32
+   # (ufw seul insuffisant : Docker contourne INPUT/OUTPUT via table nat).
    ```
 
    Résultat observé sur la boucle (2026-11-08) : `curl --cacert … → code=200`,

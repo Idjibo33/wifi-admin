@@ -12,9 +12,15 @@ aucun benchmark réel sans autorisation explicite. Image officielle `ghcr.io/lib
 - Ports libres vérifiés : `8280`, `8443`, `8888` (80 déjà pris, 8001/9000 pris).
 - Pare-feu : `ufw status` requiert root — **aucune modification appliquée sans autorisation**.
   Commandes de référence (à demander) :
-  `sudo ufw status numbered`, ouverture temporaire :
-  `sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp comment 'WiFi Admin LibreSpeed dev'`
+  `sudo ufw status numbered`, ouverture temporaire **limitée à l’IP du Pixel (/32)
+  uniquement** (IP relevée le jour J via `$ADB shell ip addr show wlan0` — observée
+  `192.168.1.115/24` le 2026-11-08, jamais tout le /24) :
+  `sudo ufw allow from 192.168.1.115/32 to any port 8443 proto tcp comment 'WiFi Admin LibreSpeed dev'`
   puis fermeture : `sudo ufw delete <num>` / `sudo ufw status numbered` pour vérifier.
+  **Attention Docker+UFW** : une règle UFW seule **NE filtre pas** un port publié par Docker
+  (table nat `DOCKER` avant `INPUT`/`OUTPUT`, docker-proxy, chaîne `FORWARD`/`DOCKER-USER`).
+  Elle doit être combinée à une règle `DOCKER-USER` (voir Voie B) ; elle disparaît au
+  redémarrage de Docker et doit être réappliquée à chaque fenêtre.
 
 ## Démarrage (boucle locale, sans pare-feu)
 
@@ -123,9 +129,17 @@ Avantage : aucune ouverture LAN, aucune CA. Limite : le dialecte loopback de
    ```bash
    docker compose --profile tls -f infra/librespeed-local/compose.yaml up -d
    curl --cacert infra/librespeed-local/tls/ca.crt https://127.0.0.1:8443/empty.php?r=12345 -v
-   # LAN seulement apres autorisation :
-   # modifier ports en 192.168.1.174:8443:8443 (ou 192.168.1.0/24) et :
-   # sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp comment 'WiFi Admin LibreSpeed dev'
+   # LAN seulement apres autorisation explicite :
+   # 1) Dans compose.yaml, remplacer (profil tls uniquement) :
+   #    ports:
+   #      - "192.168.1.174:8443:8443"   # IP LAN concrete de wlp58s0, a confirmer le jour J
+   #    (JAMAIS de CIDR 192.168.1.0/24 en host_ip : host_ip = adresse unique, voir doc Docker.)
+   # 2) Appliquer le filet DOCKER-USER limite au Pixel /32 (sudo, voir Voie B §4) :
+   #    sudo iptables -I DOCKER-USER -i wlp58s0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+   #    sudo iptables -I DOCKER-USER -i wlp58s0 ! -s 192.168.1.115/32 -j DROP
+   #    (Alternative : ipset de sources autorisees + DROP.)
+   # 3) Completer par UFW limite au meme /32 (documentation, insuffisant seul) :
+   #    sudo ufw allow from 192.168.1.115/32 to any port 8443 proto tcp comment 'WiFi Admin LibreSpeed dev'
    ```
 
    Vérifier le SAN (`openssl x509 -in infra/librespeed-local/tls/cert.pem -noout -text | grep -A1 "Subject Alternative Name"`)
