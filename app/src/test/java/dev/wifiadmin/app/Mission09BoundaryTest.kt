@@ -104,12 +104,11 @@ class Mission09BoundaryTest {
 
     @Test
     fun `the application never reads the SSID or the BSSID`() {
+        // Mission 12: WifiInfo is allowed for the link rate / RSSI / band
+        // only; SSID and BSSID stay forbidden (they would need location).
         val offenders = appSources().filter { file ->
             val text = file.readText()
-            text.contains("getSSID") ||
-                text.contains("getBSSID") ||
-                text.contains("transportInfo") ||
-                text.contains("WifiInfo")
+            text.contains("getSSID") || text.contains("getBSSID")
         }
 
         assertTrue(
@@ -198,10 +197,12 @@ class Mission09BoundaryTest {
 
     @Test
     fun `the application has no remote endpoint`() {
+        // Mission 12: manual links in SpeedTestPresentation are plain book-
+        // marks opened by the user in a browser (never called by the app).
         val offenders = appSources().filter { file ->
             val text = file.readText()
-            // The only host is the router's gateway, detected locally.
-            text.contains("https://") && !text.contains("schemas.android.com")
+            text.contains("https://") && !text.contains("schemas.android.com") &&
+                !file.path.endsWith("SpeedTestPresentation.kt")
         }
 
         assertTrue(

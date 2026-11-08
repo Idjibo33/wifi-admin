@@ -11,6 +11,7 @@ val PROTECTED_ROUTES: Set<String> = setOf(
     Route.Dashboard.path,
     Route.Devices.path,
     Route.Settings.path,
+    Route.SpeedTest.path,
 )
 
 /**
