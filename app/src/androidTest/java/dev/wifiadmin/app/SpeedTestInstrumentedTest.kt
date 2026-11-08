@@ -5,9 +5,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.wifiadmin.app.data.LocalNetworkStatus
@@ -143,5 +150,139 @@ class SpeedTestInstrumentedTest {
             )
         }
         compose.onNodeWithTag("speedtest_start_button").assertIsNotEnabled()
+        compose.onNodeWithTag("speedtest_start_button").assertTextEquals("Lancer le test")
+    }
+
+    @Test fun configured_banner_shows_provider_and_host_without_url() {
+        wrap(false, SpeedTestUiState(hasConsented = true)) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    hasConsented = true,
+                    failure = null,
+                    providerLabel = "LibreSpeed",
+                    targetHost = "speed.example.org",
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_provider_banner").assertIsDisplayed()
+            .assertTextEquals("Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 30 Mo/test")
+        compose.onNodeWithTag("speedtest_start_button").assertIsEnabled()
+            .assertTextEquals("Lancer le test")
+    }
+
+    @Test fun disabled_banner_hides_configured_text() {
+        wrap(false, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(failure = dev.wifiadmin.app.data.speedtest.SpeedTestFailure.Disabled),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithText(dev.wifiadmin.app.ui.speedtest.SpeedTestStrings.DISABLED).assertIsDisplayed()
+        compose.onNodeWithTag("speedtest_start_button").assertIsNotEnabled()
+    }
+
+    @Test fun capped_result_shows_floor() {
+        val result = cappedResult()
+        wrap(false, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    failure = null,
+                    providerLabel = "LibreSpeed — vers speed.example.org",
+                    targetHost = "speed.example.org",
+                    result = result,
+                    previousResult = result,
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_list").performScrollToNode(hasTestTag("speedtest_start_button"))
+        compose.onNodeWithText(dev.wifiadmin.app.ui.speedtest.SpeedTestStrings.INTERNET_TITLE).assertIsDisplayed()
+        compose.onNodeWithText("≥ 42,5 Mbps (plafonné)").assertIsDisplayed()
+    }
+
+    @Test fun consumption_is_shown_after_result() {
+        val result = cappedResult()
+        wrap(false, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    failure = null,
+                    providerLabel = "LibreSpeed — vers speed.example.org",
+                    targetHost = "speed.example.org",
+                    result = result,
+                    previousResult = result,
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_list").performScrollToNode(hasTestTag("speedtest_consumption"))
+        compose.onNodeWithTag("speedtest_consumption").assertIsDisplayed()
+        compose.onNodeWithText("5,0 Mo / 2,5 Mo").assertIsDisplayed()
+        compose.onNodeWithText("Plafond atteint avant stabilisation : valeur minimale, pas débit maximal.").assertIsDisplayed()
+    }
+
+    private fun cappedResult() = dev.wifiadmin.app.data.speedtest.SpeedTestResult(
+        downloadMbps = 42.5, uploadMbps = 18.2, latencyMillis = 24,
+        downloadBytes = 5L * 1024 * 1024, uploadBytes = 2L * 1024 * 1024 + 512L * 1024,
+        durationMillis = 8_000, capped = true, providerLabel = "LibreSpeed — vers speed.example.org",
+        networkKey = "host", wifiLink = null, capturedAtWallMillis = 1_700_000_000_000L,
+    )
+
+    @Test fun consent_dialog_is_explicit_before_first_test() {
+        wrap(false, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    hasConsented = false,
+                    showConsent = true,
+                    failure = null,
+                    providerLabel = "LibreSpeed",
+                    targetHost = "speed.example.org",
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithText("Serveur : LibreSpeed — vers speed.example.org (HTTPS). Pendant la mesure, le serveur voit l'adresse IP publique du Wi-Fi.")
+            .assertIsDisplayed()
+        compose.onNodeWithTag("speedtest_consent_confirm").assertIsDisplayed()
+    }
+
+    @Test fun jitter_is_shown_in_light_theme() {
+        val result = cappedResult().copy(jitterMillis = 5.0)
+        wrap(false, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    failure = null,
+                    providerLabel = "LibreSpeed — vers speed.example.org",
+                    targetHost = "speed.example.org",
+                    result = result,
+                    previousResult = result,
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_list").performScrollToNode(hasText("5,0 ms (indicatif)"))
+        compose.onNodeWithText("Gigue (jitter)").assertIsDisplayed()
+        compose.onNodeWithText("5,0 ms (indicatif)").assertIsDisplayed()
+    }
+
+    @Test fun jitter_is_shown_in_dark_theme() {
+        val result = cappedResult().copy(jitterMillis = 5.0)
+        wrap(true, SpeedTestUiState()) {
+            SpeedTestContent(
+                state = SpeedTestUiState(
+                    failure = null,
+                    providerLabel = "LibreSpeed — vers speed.example.org",
+                    targetHost = "speed.example.org",
+                    result = result,
+                    previousResult = result,
+                ),
+                onStart = {}, onCancel = {}, onDismissConsent = {}, onAcceptConsent = {},
+            )
+        }
+        compose.onNodeWithTag("speedtest_list").performScrollToNode(hasText("Latence sous charge : indisponible (non mesurée avec ce protocole)."))
+        compose.onNodeWithText("Gigue (jitter)").assertIsDisplayed()
+        compose.onNodeWithText("5,0 ms (indicatif)").assertIsDisplayed()
+        compose.onNodeWithText("Latence sous charge : indisponible (non mesurée avec ce protocole).")
+            .assertIsDisplayed()
     }
 }

@@ -266,9 +266,46 @@ class SpeedTestRepository(
                 return
             }
             val result = withTimeout(policy.maxDurationMillis) {
-                engine.run { progress -> publish(myGeneration, progress) }
+                engine.run { progress ->
+                    // Backstop on the reported counters (SEC-01, scope):
+                    // this layer kills a run whose reported progress
+                    // exceeds the prepaid caps. It does NOT prove a
+                    // misbehaving engine never moved extra bytes on the
+                    // wire between progress events: only the engine's
+                    // own stream-byte cap guarantees that. Both layers
+                    // together cover reporting and wire.
+                    val overDownload = progress.downloadBytes > policy.maxDownloadBytes
+                    val overUpload = progress.uploadBytes > policy.maxUploadBytes
+                    val overTotal = progress.downloadBytes + progress.uploadBytes >
+                        policy.maxDownloadBytes + policy.maxUploadBytes
+                    if (overDownload || overUpload || overTotal) {
+                        runCatching { engine.cancel() }
+                        throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
+                    }
+                    publish(myGeneration, progress)
+                }
             }
-            publish(myGeneration, SpeedTestState.Done(result))
+            // Same check on the terminal result: an engine that never
+            // emitted progress but claims over-cap bytes at the end is
+            // failed instead of published.
+            if (result.downloadBytes > policy.maxDownloadBytes ||
+                result.uploadBytes > policy.maxUploadBytes
+            ) {
+                publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Incomplete))
+                return
+            }
+            // The real engine does not know the Wi-Fi identity: fill the
+            // blank network key and link from the repository's own view.
+            // Engines that already report them (Fake) are untouched.
+            val enriched = if (result.networkKey.isBlank()) {
+                result.copy(
+                    networkKey = expectedNetworkKey,
+                    wifiLink = result.wifiLink ?: runCatching { linkProvider?.current() }.getOrNull(),
+                )
+            } else {
+                result
+            }
+            publish(myGeneration, SpeedTestState.Done(enriched))
         } catch (e: TimeoutCancellationException) {
             publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Timeout))
         } catch (e: SpeedTestFailureException) {

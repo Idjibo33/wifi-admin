@@ -29,6 +29,19 @@ object SpeedTestCalculator {
         else (sorted[mid - 1] + sorted[mid]) / 2
     }
 
+    /**
+     * Jitter over a probe series: mean of the absolute differences
+     * between consecutive probes, in milliseconds. Null when fewer than
+     * two probes succeeded (never 0 ms, which would claim a perfect
+     * link). Missing probes are dropped, never bridged.
+     */
+    fun jitterMillis(probesMillis: List<Long>): Double? {
+        val probes = probesMillis.filter { it >= 0 }
+        if (probes.size < 2) return null
+        val gaps = probes.zipWithNext { a, b -> kotlin.math.abs(b - a).toDouble() }
+        return gaps.sum() / gaps.size
+    }
+
     /** True when a cap stopped the transfer before a stable window. */
     fun isCapped(
         downloadBytes: Long, uploadBytes: Long,
