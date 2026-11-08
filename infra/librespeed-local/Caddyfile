@@ -1,0 +1,24 @@
+# Caddyfile — profil TLS dev (Mission 14) — NE PAS UTILISER SANS AUTORISATION
+# Designe uniquement a la validation HTTPS locale avec CA de confiance debug-only.
+# Le certificat et la cle privee sont generes par generate-local-ca.sh dans ./tls/
+# et ne doivent JAMAIS etre commites (voir .gitignore).
+# SAN requis: IP 127.0.0.1, IP LAN Ubuntu (ex. 192.168.1.174), DNS localhost.
+# Base URL cote Android (debug uniquement):
+#   - boucle: https://127.0.0.1:8443  (sans pare-feu, avec adb reverse ou curl)
+#   - LAN:    https://<IP-LAN>:8443     (apres ouverture pare-feu autorisee)
+
+:8443 {
+    tls /certs/cert.pem /certs/key.pem
+
+    # Pas de redirections vers un autre hote : reverse_proxy direct.
+    # LibreSpeed backend ecoute sur le reseau libreSpeed-local:8080.
+    reverse_proxy speedtest:8080
+
+    log {
+        output stdout
+        format console
+    }
+}
+
+# Garde-fou: l'endpoint HTTPS ne doit pas etre expose hors du LAN.
+# Si une ouverture LAN est autorisee, restreindre cote pare-feu a l'IP du Pixel.

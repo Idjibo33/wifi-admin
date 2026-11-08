@@ -21,6 +21,15 @@ Thumbs.db
 local.properties
 *.keystore
 *.jks
+*.key
+*.p12
+# LibreSpeed local TLS (Mission 14): keep private keys and server keypairs
+# local-only. The CA PUBLIC cert in app/src/debug/res/raw/local_ca.crt
+# may be committed separately (it is not a secret).
+infra/librespeed-local/tls/*
+!infra/librespeed-local/tls/.gitkeep
+# app/src/debug/res/raw/local_ca.crt est volontairement suivi (certificat public).
+
 
 # Gradle wrapper checksum is intentionally kept in gradle/wrapper/.
 __pycache__/
