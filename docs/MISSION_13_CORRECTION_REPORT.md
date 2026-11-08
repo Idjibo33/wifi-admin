@@ -102,3 +102,20 @@ CI verte attendue avant tout avis de fusion ; **aucune fusion sans autorisation*
 | Protocole et métrologie LibreSpeed | `docs/MISSION_13_METROLOGY.md` (download/UL/jitter, arbitrages) |
 | Tests Kotlin et concurrence | `SpeedTestReuseTest` + `SpeedTestNetworkLossRepoTest` (2 rouges prouvant le bug) |
 | Revue de sécurité indépendante | `docs/MISSION_13_CORRECTIVE_REVIEW.md` (CORR-01→05, axes Standards/Spec) |
+
+## Additif de clôture (08/11/2026, commit `b9c89db`)
+
+| Anomalie | Cause racine | Correctif |
+|---|---|---|
+| Upload PRNG répété | `random.nextBytes(chunk)` appelé une fois **hors boucle** (`LibreSpeedClient.kt:191-192`), même bloc réécrit jusqu'au plafond | `nextBytes` **à chaque itération** dans `writeTo` ; comptage = octets réellement écrits dans le flux applicatif (pas des octets fil physiques) |
+| Annulation upload brute | `IOException` du socket annulé non mappée par le client | `CancellationException` quand le client est annulé (même contrat que le moteur) |
+| Choix Wi-Fi arbitraire | `allNetworks.firstOrNull` sans lien avec l'identité validée (le run pouvait se lier à B alors que le repository validait A) | `AndroidWifiNetworkRouteProvider` re-lit `currentStatus()` au run et filtre les candidats sur `interfaceName` validé (+ repli `activeNetwork` filtré) ; sans `bindProcessToNetwork`, sans changement JVM |
+
+Nouveaux tests : `LibreSpeedUploadTest` (4/4 — blocs ≠, volume ≤ plafond et serveur = retourné,
+annulation à latch, reproductibilité) ; `SpeedTestInstrumentedTest` +2 (jitter clair/sombre,
+« Latence sous charge : indisponible »).
+
+Validations finales : JVM **405 tests, 0 échec** ; instrumentés Pixel 7 Pro **22/22**
+(SpeedTest 12, Navigation 3, SessionExpiry 4, NetworkChange 3, jitter clair et sombre) ;
+aucun test de débit Internet réel lancé ; CI `42506084696` **vert** sur `b9c89db`.
+Statut Git : PR #6 `OPEN`/`CLEAN`, commit `b9c89db` — **non fusionnée, en attente d'autorisation**.
