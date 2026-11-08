@@ -3,6 +3,16 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Mission 14: override LibreSpeed for debug-only builds. The release default
+// stays empty (DisabledSpeedTestEngine). Resolution order (never committed):
+// Gradle property -Pwifiadmin.speedtestBaseUrl > env SPEEDTEST_URL_DEBUG >
+// loopback default for adb reverse (Pixel 127.0.0.1 -> Ubuntu 127.0.0.1:8280).
+val speedtestDebugUrl: String =
+    (findProperty("wifiadmin.speedtestBaseUrl") as? String)
+        ?.takeIf { it.isNotBlank() }
+        ?: System.getenv("SPEEDTEST_URL_DEBUG")?.takeIf { it.isNotBlank() }
+        ?: "http://127.0.0.1:8280"
+
 android {
     namespace = "dev.wifiadmin.app"
     compileSdk = 37
@@ -21,6 +31,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Debug-only LibreSpeed override (loopback by default, LAN HTTPS with
+            // -Pwifiadmin.speedtestBaseUrl=https://192.168.1.174:8443 after explicit
+            // firewall authorisation). Never applied to release.
+            buildConfigField("String", "SPEEDTEST_BASE_URL", "\"$speedtestDebugUrl\"")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(

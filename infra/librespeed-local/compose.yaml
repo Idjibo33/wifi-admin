@@ -1,0 +1,82 @@
+# LibreSpeed local — environnement de développement isolé (Mission 14)
+# Installation: docker compose -f infra/librespeed-local/compose.yaml up -d
+# Arrêt: docker compose -f infra/librespeed-local/compose.yaml down
+# Verification: consulter infra/librespeed-local/README.md
+# Aucun port public: ecoute uniquement sur 127.0.0.1 (boucle locale Ubuntu).
+# Aucun volume persistant contenant des identifiants: telemetrie desactivee,
+# aucun montage, aucun secret. Mode backend: seuls les endpoints
+# garbage.php / empty.php / getIP.php sont servis (cf. LibreSpeedClient.kt :
+# empty.php ping GET + upload POST, garbage.php download — jamais getIP.php).
+# Documentation officielle: https://github.com/librespeed/speedtest/blob/master/doc_docker.md
+# Image officielle ghcr.io/librespeed/speedtest, version pinnée 6.3.1
+# (release v6.3.1 2026-10-21 ; manifest amd64 sha256:c7ac7092ccbf793e9ed613818c501ad6052161c18a16a3fbaa9d5b765002a65d).
+name: wifiadmin-librespeed-local
+
+services:
+  speedtest:
+    image: ghcr.io/librespeed/speedtest:6.3.1
+    # Backend seul (pas d'UI) : repond a empty.php / garbage.php / getIP.php.
+    # Mode "standalone" exposerait aussi une interface web et la page de resultats,
+    # non voulue pour un backend controle. Le backend respecte l'isolation
+    # routage (garbage.php/empty.php seulement) et l'absence de telemetrie.
+    environment:
+      MODE: backend
+      TELEMETRY: "false"
+      # Pas d'appel a ipinfo.io (services externes) : les calculs ISP/distances
+      # sont desactives. Aucun trafic Internet requis pour valider les endpoints.
+      DISABLE_IPINFO: "true"
+      # Pas de distance (pas de cle ipinfo)
+      DISTANCE: ""
+      WEBPORT: "8080"
+    security_opt:
+      - "no-new-privileges:true"
+    # Ecoute limitee a la boucle locale: aucune exposition LAN a ce stade.
+    # L'acces Pixel passe par "adb reverse" (sans pare-feu) ou, apres autorisation
+    # explicite, par le profil "tls" ci-dessous sur le LAN (voir ATTRIBUTION).
+    ports:
+      - "127.0.0.1:8280:8080"
+    restart: "no"
+    # Reseau isole : aucun acces direct au protocole admin ZLT.
+    # Le conteneur reste en mode bridge ; il ne recoit ni credentials
+    # ni routes specifiques vers le routeur. Isolation supplementaire recommandee :
+    # ne jamais monter de volume contenant des secrets, ne pas utiliser
+    # "network_mode: host", et restreindre l'egress si le pare-feu le permet.
+    networks:
+      - librespeed-local
+    # Aucun volume: telemetrie desactivee, aucun resultat collecte.
+    # Aucun healthcheck impose ici : la disponibilite se prouve par
+    # curl sur empty.php (voir README).
+
+  # Profil optionnel "tls" : terminaison HTTPS dev avec CA locale.
+  # MAINTENIR DESACTIVE par defaut (profile). Demarre uniquement apres :
+  # 1) generation de la CA et du certificat SAN (generate-local-ca.sh),
+  # 2) copie du certificat CA PUBLIC dans app/src/debug/res/raw/ (debug-only),
+  # 3) autorisation explicite avant toute ouverture LAN/pare-feu.
+  # Ne jamais demarrer ce profil sans valider le SAN (IP LAN + localhost).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./tls:/certs:ro
+    # Par defaut, ecoute boucle locale uniquement. Pour l'acces LAN Pixel,
+    # modifier apres autorisation explicite en :
+    # ports: ["192.168.1.0/24:8443:8443"]  (voir README).
+    ports:
+      - "127.0.0.1:8443:8443"
+    # Caddy force HTTPS sur 443 interne ; le port 8443 externe entraine
+    # une redirection 308 vers https://...:443. Pour la validation via
+    # https://127.0.0.1:8443, configurer Caddy en tls internal ou
+    # fournir un certificat explicite (voir Caddyfile).
+    restart: "no"
+    networks:
+      - librespeed-local
+    depends_on:
+      - speedtest
+
+networks:
+  librespeed-local:
+    driver: bridge
+    # Attribut wireguard-free: pas de controle-iptables supplementaire ici.
+    # L'isolation applicative vient de l'absence de credentials et du
+    # reseau bridge sans exposition host.
