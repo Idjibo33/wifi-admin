@@ -52,6 +52,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.wifiadmin.app.ui.components.EXPIRY_MESSAGE
+import dev.wifiadmin.app.ui.components.LOCAL_NETWORK_PERMISSION_MESSAGE
 import dev.wifiadmin.app.ui.theme.WifiAdminTheme
 import dev.wifiadmin.app.ui.theme.WifiDims
 
@@ -65,13 +66,29 @@ import dev.wifiadmin.app.ui.theme.WifiDims
 fun LoginScreen(
     viewModel: LoginViewModel,
     onConnected: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val result by viewModel.result.collectAsStateWithLifecycle()
 
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+
+    // Après un accord (dialogue ou retour des réglages), l'ancienne erreur
+    // de permission est effacée sans redémarrage : l'utilisateur peut
+    // immédiatement réessayer avec « Se connecter ».
+    androidx.compose.runtime.LaunchedEffect(
+        localNetworkPermissionState?.status,
+    ) {
+        if (localNetworkPermissionState?.status ==
+            dev.wifiadmin.app.data.LocalNetworkPermissionStatus.Granted
+        ) {
+            viewModel.clearLocalNetworkPermissionDenied()
+        }
+    }
 
     if (result == LoginResult.Success) {
         androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -224,7 +241,23 @@ fun LoginScreen(
                 }
             }
 
-            LoginResultMessage(result)
+            LoginResultMessage(
+                result = result,
+                localNetworkPermissionState = localNetworkPermissionState,
+                onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                onOpenAppSettings = onOpenAppSettings,
+            )
+
+            // Bandeau permission avant toute erreur (cas initial Required).
+            if (localNetworkPermissionState?.blocksLocalNetwork == true &&
+                result == LoginResult.None
+            ) {
+                PermissionBanner(
+                    state = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
+                )
+            }
 
             Text(
                 text = "Connexion locale uniquement. Le mot de passe n'est pas conservé.",
@@ -286,7 +319,12 @@ private fun DetectedRouterRow(host: String, wasDetected: Boolean) {
 }
 
 @Composable
-private fun LoginResultMessage(result: LoginResult) {
+private fun LoginResultMessage(
+    result: LoginResult,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
+) {
     AnimatedVisibility(visible = result != LoginResult.None && result != LoginResult.Success) {
         when (result) {
             LoginResult.None -> Unit
@@ -313,6 +351,34 @@ private fun LoginResultMessage(result: LoginResult) {
                 text = "Le routeur a répondu de façon inattendue.",
                 isError = true
             )
+            LoginResult.LocalNetworkPermissionDenied -> MessageCard(
+                text = LOCAL_NETWORK_PERMISSION_MESSAGE,
+                isError = true,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                    modifier = Modifier.padding(horizontal = WifiDims.Space4, vertical = WifiDims.Space2),
+                ) {
+                    if (localNetworkPermissionState?.canAskAgain == true &&
+                        onRequestLocalNetworkPermission != null
+                    ) {
+                        Button(
+                            onClick = onRequestLocalNetworkPermission,
+                            modifier = Modifier.testTag("login_permission_allow_button"),
+                        ) {
+                            Text("Autoriser l'accès")
+                        }
+                    }
+                    if (onOpenAppSettings != null) {
+                        androidx.compose.material3.TextButton(
+                            onClick = onOpenAppSettings,
+                            modifier = Modifier.testTag("login_permission_settings_button"),
+                        ) {
+                            Text("Ouvrir les paramètres")
+                        }
+                    }
+                }
+            }
             is LoginResult.Cooldown -> MessageCard(
                 text = result.retryAfterSeconds?.let { seconds ->
                     "Trop de tentatives. Le routeur refuse les connexions " +
@@ -326,7 +392,11 @@ private fun LoginResultMessage(result: LoginResult) {
 }
 
 @Composable
-private fun MessageCard(text: String, isError: Boolean) {
+private fun MessageCard(
+    text: String,
+    isError: Boolean,
+    actions: @Composable (() -> Unit)? = null,
+) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (isError) {
@@ -339,16 +409,65 @@ private fun MessageCard(text: String, isError: Boolean) {
             .fillMaxWidth()
             .semantics { liveRegion = LiveRegionMode.Assertive }
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (isError) {
-                MaterialTheme.colorScheme.onErrorContainer
-            } else {
-                MaterialTheme.colorScheme.onSecondaryContainer
-            },
-            modifier = Modifier.padding(WifiDims.Space4)
-        )
+        Column(modifier = Modifier.padding(WifiDims.Space4)) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isError) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                },
+            )
+            if (actions != null) {
+                actions()
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionBanner(
+    state: dev.wifiadmin.app.data.LocalNetworkPermissionState,
+    onRequestLocalNetworkPermission: (() -> Unit)?,
+    onOpenAppSettings: (() -> Unit)?,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Column(modifier = Modifier.padding(WifiDims.Space4)) {
+            Text(
+                text = LOCAL_NETWORK_PERMISSION_MESSAGE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                modifier = Modifier.padding(top = WifiDims.Space2),
+            ) {
+                if (state.canAskAgain && onRequestLocalNetworkPermission != null) {
+                    Button(
+                        onClick = onRequestLocalNetworkPermission,
+                        modifier = Modifier.testTag("login_permission_banner_allow"),
+                    ) {
+                        Text("Autoriser l'accès")
+                    }
+                }
+                if (onOpenAppSettings != null) {
+                    androidx.compose.material3.TextButton(
+                        onClick = onOpenAppSettings,
+                        modifier = Modifier.testTag("login_permission_banner_settings"),
+                    ) {
+                        Text("Ouvrir les paramètres")
+                    }
+                }
+            }
+        }
     }
 }
 

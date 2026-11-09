@@ -21,6 +21,14 @@ sealed class LoginResult {
     data object UnexpectedResponse : LoginResult()
 
     /**
+     * L'autorisation du réseau local est requise ou refusée (vérifiée).
+     *
+     * Aucun socket n'a été ouvert. Après accord, l'écran peut réessayer
+     * sans redémarrage via [LoginViewModel.clearLocalNetworkPermissionDenied].
+     */
+    data object LocalNetworkPermissionDenied : LoginResult()
+
+    /**
      * The previous session could not be renewed.
      *
      * The message on screen is fixed: "Votre session a expiré. Reconnectez-vous
@@ -151,18 +159,37 @@ class LoginViewModel(
             val accepted = repository.connect(host, username, password)
             val error = repository.state.value.error
             _state.value = _state.value.copy(isConnecting = false)
-            _result.value = when {
-                accepted -> LoginResult.Success
-                error is RouterUnavailableException.Unreachable -> LoginResult.NetworkError
-                error is RouterUnavailableException.Timeout -> LoginResult.Timeout
-                error is RouterUnavailableException.UnexpectedResponse ->
+            _result.value = when (error) {
+                null -> if (accepted) LoginResult.Success else LoginResult.InvalidCredentials
+                is RouterUnavailableException.Unreachable -> LoginResult.NetworkError
+                is RouterUnavailableException.Timeout -> LoginResult.Timeout
+                is RouterUnavailableException.LocalNetworkPermissionDenied ->
+                    LoginResult.LocalNetworkPermissionDenied
+                is RouterUnavailableException.UnexpectedResponse ->
                     LoginResult.UnexpectedResponse
-                error is RouterUnavailableException.SessionExpired ->
+                is RouterUnavailableException.SessionExpired ->
                     LoginResult.SessionExpired
-                error is RouterUnavailableException.Cooldown ->
+                is RouterUnavailableException.Cooldown ->
                     LoginResult.Cooldown(error.retryAfterSeconds)
-                else -> LoginResult.InvalidCredentials
+                is RouterUnavailableException.AuthenticationFailed -> LoginResult.InvalidCredentials
+                is RouterUnavailableException.NotConnected -> LoginResult.InvalidCredentials
             }
+            // L'ancien `else -> InvalidCredentials` aurait masqué
+            // LocalNetworkPermissionDenied en « mauvais mot de passe ».
+        }
+    }
+
+    /**
+     * Efface l'erreur de permission après un accord.
+     *
+     * Appelé quand le dialogue système ou les réglages viennent d'accorder
+     * l'autorisation : l'utilisateur peut aussitôt réessayer sans redémarrer.
+     * Ne déclenche jamais une connexion automatique (le mot de passe n'est
+     * jamais conservé en ViewModel).
+     */
+    fun clearLocalNetworkPermissionDenied() {
+        if (_result.value is LoginResult.LocalNetworkPermissionDenied) {
+            _result.value = LoginResult.None
         }
     }
 }

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class FakeNetworkMonitor(
     initial: LocalNetworkStatus = LocalNetworkStatus.NoWifi,
+    vpnPresent: Boolean = false,
 ) : NetworkMonitor {
 
     private val _status = MutableStateFlow(initial)
@@ -23,4 +24,13 @@ class FakeNetworkMonitor(
     fun emit(status: LocalNetworkStatus) {
         _status.value = status
     }
+
+    var vpnPresent: Boolean = vpnPresent
+        private set
+
+    fun setVpnPresent(present: Boolean) {
+        vpnPresent = present
+    }
+
+    override fun isVpnPresent(): Boolean = vpnPresent
 }

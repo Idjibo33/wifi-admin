@@ -105,7 +105,11 @@ import dev.wifiadmin.router.WifiBand
 @Composable
 fun DevicesScreen(
     viewModel: DevicesViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
+    vpnPresent: Boolean = false,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var selectedRow by remember { mutableStateOf<DeviceRow?>(null) }
@@ -148,7 +152,11 @@ fun DevicesScreen(
                     onFilterChange = viewModel::setFilter,
                     onSortChange = viewModel::setSort,
                     onDeviceClick = { selectedRow = it },
-                    onRenameClick = { renamingRow = it }
+                    onRenameClick = { renamingRow = it },
+                    localNetworkPermissionState = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
+                    vpnPresent = vpnPresent,
                 )
             }
         }
@@ -214,7 +222,11 @@ fun DeviceList(
     onSortChange: (DeviceSort) -> Unit,
     onDeviceClick: (DeviceRow) -> Unit,
     onRenameClick: (DeviceRow) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
+    vpnPresent: Boolean = false,
 ) {
     val rows = state.filteredRows
     val groups = groupRows(rows)
@@ -227,12 +239,54 @@ fun DeviceList(
     ) {
         if (state.hasStaleData) {
             state.staleDataReason?.let { reason ->
+                val isPermission = reason == dev.wifiadmin.app.ui.components.StaleDataReason.PERMISSION_DENIED
                 CachedDataBanner(
                     capturedAtMillis = state.lastRefreshMillis,
                     reason = reason,
-                    detail = state.errorMessage
+                    detail = state.errorMessage,
+                    actions = if (isPermission) {
+                        {
+                            androidx.compose.foundation.layout.Row(
+                                horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                            ) {
+                                if (localNetworkPermissionState?.canAskAgain == true &&
+                                    onRequestLocalNetworkPermission != null
+                                ) {
+                                    androidx.compose.material3.Button(
+                                        onClick = onRequestLocalNetworkPermission,
+                                        modifier = Modifier.testTag("devices_permission_allow"),
+                                    ) {
+                                        androidx.compose.material3.Text("Autoriser l'accès")
+                                    }
+                                }
+                                if (onOpenAppSettings != null) {
+                                    androidx.compose.material3.TextButton(
+                                        onClick = onOpenAppSettings,
+                                        modifier = Modifier.testTag("devices_permission_settings"),
+                                    ) {
+                                        androidx.compose.material3.Text("Ouvrir les paramètres")
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
+            Spacer(Modifier.height(WifiDims.Space2))
+        }
+
+        if (vpnPresent && state.errorMessage != null &&
+            state.staleDataReason == dev.wifiadmin.app.ui.components.StaleDataReason.SYNC_FAILED
+        ) {
+            dev.wifiadmin.app.ui.components.InfoNoticeCard(
+                title = "VPN actif",
+                body = dev.wifiadmin.app.data.VPN_MAY_AFFECT_MESSAGE,
+                modifier = Modifier.fillMaxWidth().testTag("devices_vpn_hint"),
+                expanded = false,
+                onToggle = {},
+            )
             Spacer(Modifier.height(WifiDims.Space2))
         }
 

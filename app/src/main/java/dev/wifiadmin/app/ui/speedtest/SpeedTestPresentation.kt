@@ -26,6 +26,7 @@ object SpeedTestStrings {
     const val TOO_BUSY = "Un test est déjà en cours."
     const val TIMEOUT = "Le test a dépassé le délai autorisé."
     const val INCOMPLETE = "La mesure a été interrompue. Les valeurs affichées sont partielles."
+    const val PERMISSION_REQUIRED = "Accès au réseau local requis. Autorisez l'accès pour lancer la mesure."
     const val LINK_TITLE = "Liaison Wi-Fi (téléphone ↔ routeur)"
     const val LINK_NOTE = "La liaison mesure le Wi-Fi entre le téléphone et le routeur. " +
         "Le test de vitesse mesure Internet via un serveur. Un débit de liaison élevé " +
@@ -53,6 +54,7 @@ fun failureMessage(failure: SpeedTestFailure): String = when (failure) {
     SpeedTestFailure.TooBusy -> SpeedTestStrings.TOO_BUSY
     SpeedTestFailure.Timeout -> SpeedTestStrings.TIMEOUT
     SpeedTestFailure.Incomplete -> SpeedTestStrings.INCOMPLETE
+    SpeedTestFailure.PermissionRequired -> SpeedTestStrings.PERMISSION_REQUIRED
     SpeedTestFailure.Unexpected -> "Une erreur est survenue. Réessayez."
 }
 

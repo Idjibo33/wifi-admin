@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -71,7 +72,11 @@ fun DashboardScreen(
     viewModel: DashboardViewModel,
     onSeeActives: (() -> Unit)? = null,
     onOpenSpeedTest: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
+    vpnPresent: Boolean = false,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -104,7 +109,15 @@ fun DashboardScreen(
                 errorMessage = state.errorMessage,
                 modifier = Modifier.fillMaxSize()
             ) {
-                DashboardContent(state = state, onSeeActives = onSeeActives, onOpenSpeedTest = onOpenSpeedTest)
+                DashboardContent(
+                    state = state,
+                    onSeeActives = onSeeActives,
+                    onOpenSpeedTest = onOpenSpeedTest,
+                    localNetworkPermissionState = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
+                    vpnPresent = vpnPresent,
+                )
             }
         }
     }
@@ -122,7 +135,11 @@ internal fun DashboardContent(
     state: DashboardUiState,
     onSeeActives: (() -> Unit)? = null,
     onOpenSpeedTest: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
+    vpnPresent: Boolean = false,
 ) {
     val snapshot = state.snapshot
     val animationEnabled = rememberAnimationEnabled()
@@ -136,12 +153,57 @@ internal fun DashboardContent(
         if (state.hasStaleData) {
             item(key = "data-freshness", contentType = "banner") {
                 state.staleDataReason?.let { reason ->
+                    val isPermission = reason == dev.wifiadmin.app.ui.components.StaleDataReason.PERMISSION_DENIED
                     CachedDataBanner(
                         capturedAtMillis = state.lastRefreshMillis,
                         reason = reason,
-                        detail = state.errorMessage
+                        detail = state.errorMessage,
+                        actions = if (isPermission) {
+                            {
+                                androidx.compose.foundation.layout.Row(
+                                    horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                                ) {
+                                    if (localNetworkPermissionState?.canAskAgain == true &&
+                                        onRequestLocalNetworkPermission != null
+                                    ) {
+                                        androidx.compose.material3.Button(
+                                            onClick = onRequestLocalNetworkPermission,
+                                            modifier = Modifier.testTag("dashboard_permission_allow"),
+                                        ) {
+                                            androidx.compose.material3.Text("Autoriser l'accès")
+                                        }
+                                    }
+                                    if (onOpenAppSettings != null) {
+                                        androidx.compose.material3.TextButton(
+                                            onClick = onOpenAppSettings,
+                                            modifier = Modifier.testTag("dashboard_permission_settings"),
+                                        ) {
+                                            androidx.compose.material3.Text("Ouvrir les paramètres")
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        },
                     )
                 }
+            }
+        }
+
+        // Indication prudente VPN : uniquement quand un échec coexiste avec
+        // un VPN présent. Jamais une cause certaine.
+        if (vpnPresent && state.errorMessage != null &&
+            state.staleDataReason == dev.wifiadmin.app.ui.components.StaleDataReason.SYNC_FAILED
+        ) {
+            item(key = "vpn-hint", contentType = "vpn") {
+                InfoNoticeCard(
+                    title = "VPN actif",
+                    body = dev.wifiadmin.app.data.VPN_MAY_AFFECT_MESSAGE,
+                    modifier = Modifier.fillMaxWidth().testTag("dashboard_vpn_hint"),
+                    expanded = false,
+                    onToggle = {},
+                )
             }
         }
 

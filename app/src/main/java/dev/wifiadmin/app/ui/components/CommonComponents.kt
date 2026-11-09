@@ -263,7 +263,8 @@ fun CachedDataBanner(
     capturedAtMillis: Long?,
     reason: StaleDataReason,
     detail: String? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    actions: @Composable (() -> Unit)? = null,
 ) {
     val message = staleDataMessage(reason, capturedAtMillis)
 
@@ -292,12 +293,17 @@ fun CachedDataBanner(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
-                if (detail != null && reason != StaleDataReason.NETWORK_CHANGED) {
+                if (detail != null && reason != StaleDataReason.NETWORK_CHANGED &&
+                    reason != StaleDataReason.PERMISSION_DENIED
+                ) {
                     Text(
                         text = detail,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer
                     )
+                }
+                if (actions != null) {
+                    actions()
                 }
             }
         }

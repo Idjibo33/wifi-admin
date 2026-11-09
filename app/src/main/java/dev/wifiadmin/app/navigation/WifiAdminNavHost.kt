@@ -67,7 +67,10 @@ private enum class Tab(
 fun WifiAdminNavHost(
     container: AppContainer,
     appVersionName: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
 ) {
     val navController = rememberNavController()
     val viewModelFactory = remember(container) { WifiAdminViewModelFactory(container) }
@@ -141,7 +144,10 @@ fun WifiAdminNavHost(
                         navController.navigate(Route.Dashboard.path) {
                             popUpTo(Route.Login.path) { inclusive = true }
                         }
-                    }
+                    },
+                    localNetworkPermissionState = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
                 )
             }
             composable(Route.Dashboard.path) {
@@ -161,19 +167,32 @@ fun WifiAdminNavHost(
                         navController.navigate(Route.SpeedTest.path) {
                             launchSingleTop = true
                         }
-                    }
+                    },
+                    localNetworkPermissionState = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
+                    vpnPresent = container.networkMonitor.isVpnPresent(),
                 )
             }
             composable(Route.SpeedTest.path) {
                 val viewModel: SpeedTestViewModel = viewModel(factory = viewModelFactory)
                 SpeedTestScreen(
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    localNetworkPermissionState = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
                 )
             }
             composable(Route.Devices.path) {
                 val viewModel: DevicesViewModel = viewModel(factory = viewModelFactory)
-                DevicesScreen(viewModel = viewModel)
+                DevicesScreen(
+                    viewModel = viewModel,
+                    localNetworkPermissionState = localNetworkPermissionState,
+                    onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
+                    vpnPresent = container.networkMonitor.isVpnPresent(),
+                )
             }
             composable(Route.Settings.path) {
                 val viewModel: SettingsViewModel = viewModel(factory = viewModelFactory)

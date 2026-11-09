@@ -86,4 +86,18 @@ sealed class RouterUnavailableException(
     /** The router answered something the client cannot use. */
     class UnexpectedResponse(cause: Throwable? = null) :
         RouterUnavailableException("The router returned an unexpected response", cause)
+
+    /**
+     * Le réseau local est bloqué par l'autorisation Android absente.
+     *
+     * Sur Android 17+ (API 37, cible 37+), l'accès au réseau local exige
+     * `ACCESS_LOCAL_NETWORK`. Sans elle, le système bloque les sockets TCP
+     * (timeout générique). Cette exception représente **cette cause
+     * précise** : elle ne doit être posée qu'après vérification réelle de
+     * l'état de la permission, jamais pour un timeout sans preuve.
+     *
+     * Elle **conserve la session** : elle n'est jamais un expiry.
+     */
+    class LocalNetworkPermissionDenied(cause: Throwable? = null) :
+        RouterUnavailableException("L'autorisation d'accès au réseau local est requise", cause)
 }

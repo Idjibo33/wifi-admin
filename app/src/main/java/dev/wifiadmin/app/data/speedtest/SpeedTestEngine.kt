@@ -156,6 +156,7 @@ class SpeedTestRepository(
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO,
     private val policy: SpeedTestPolicy = SpeedTestPolicy(),
+    private val localNetworkPermissionGateway: dev.wifiadmin.app.data.LocalNetworkPermissionGateway? = null,
 ) {
     /** Serialises the run slot, the generation and every engine.cancel(). */
     private val lock = Any()
@@ -197,6 +198,13 @@ class SpeedTestRepository(
         val statusOrError = runCatching { monitor.currentStatus() }
         synchronized(lock) {
             if (running) return
+            // Gate permission : aucune connexion LAN prématurée. Vérifiée
+            // avant tout slot et tout socket. Après accord, le run reste
+            // Idle : seul ce tap utilisateur démarre une mesure.
+            if (localNetworkPermissionGateway?.state?.value?.blocksLocalNetwork == true) {
+                _state.value = SpeedTestState.Failed(SpeedTestFailure.PermissionRequired)
+                return
+            }
             val status = statusOrError.getOrElse {
                 _state.value = SpeedTestState.Failed(SpeedTestFailure.Unexpected)
                 return
@@ -347,6 +355,16 @@ class SpeedTestRepository(
                 _state.value = SpeedTestState.Cancelled
             }
         }
+    }
+
+    /**
+     * La permission vient d'être révoquée : annule le run en cours.
+     *
+     * Jamais de retry, jamais de benchmark auto après réaccord : le slot est
+     * libéré et l'état reste Cancelled jusqu'au prochain tap utilisateur.
+     */
+    fun onLocalNetworkPermissionRevoked() {
+        if (isRunning) cancel(CancelReason.USER)
     }
 
     /** A cold flow that cancels the test when the network leaves Wi-Fi or changes identity. */
