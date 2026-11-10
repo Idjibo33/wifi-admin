@@ -1,6 +1,7 @@
 package dev.wifiadmin.app
 
 import android.app.Application
+import dev.wifiadmin.app.data.AndroidLocalNetworkPermissionGateway
 import dev.wifiadmin.app.data.AndroidNetworkMonitor
 import dev.wifiadmin.app.data.AppClock
 import dev.wifiadmin.app.data.DeviceListPreferencesStore
@@ -68,6 +69,17 @@ class AppContainer(application: Application) {
     val networkMonitor: NetworkMonitor = AndroidNetworkMonitor(application)
 
     /**
+     * Le point de passage unique de l'autorisation du réseau local.
+     *
+     * Une **seule** instance pour toute l'application (le seul système de
+     * permission). `MainActivity` reste le seul pont Android (launcher,
+     * `onResume`, rationale) ; les repositories et les écrans observent
+     * seulement son état.
+     */
+    val localNetworkPermissionGateway: AndroidLocalNetworkPermissionGateway =
+        AndroidLocalNetworkPermissionGateway(application)
+
+    /**
      * The last device snapshot.
      *
      * `noBackupFilesDir` is excluded from cloud backup and device-to-device
@@ -117,6 +129,7 @@ class AppContainer(application: Application) {
         clock = clock,
         scope = applicationScope,
         networkMonitor = networkMonitor,
+        localNetworkPermissionGateway = localNetworkPermissionGateway,
     )
 
     /** Link info provider (phone ↔ access point), no permission needed. */
@@ -144,6 +157,7 @@ class AppContainer(application: Application) {
         clock = clock,
         scope = applicationScope,
         policy = SpeedTestPolicy(),
+        localNetworkPermissionGateway = localNetworkPermissionGateway,
     )
 
     /**
@@ -174,6 +188,26 @@ class AppContainer(application: Application) {
         // When the network comes back, the failures caused by the wrong
         // network must not delay the reads.
         routerRepository.onNetworkRestored = refreshCoordinator::resetFailures
+
+        // Révocation : suspension du polling + annulation du speed test en
+        // cours. Jamais de retry agressif, jamais de timeout répété.
+        routerRepository.onLocalNetworkPermissionRevoked = {
+            refreshCoordinator.stopPolling()
+            speedTestRepository.onLocalNetworkPermissionRevoked()
+        }
+
+        // Réaccord : les échecs causés par l'absence d'autorisation sont
+        // oubliés et, si la session est déjà ouverte, une seule lecture
+        // reprend. Aucun benchmark auto, aucun redémarrage.
+        routerRepository.onLocalNetworkPermissionRestored = {
+            refreshCoordinator.resetFailures()
+            if (routerRepository.state.value.isConnected ||
+                routerRepository.state.value.connection is dev.wifiadmin.app.data.ConnectionState.Cooldown ||
+                routerRepository.state.value.connection is dev.wifiadmin.app.data.ConnectionState.NetworkChanged
+            ) {
+                refreshCoordinator.startPolling()
+            }
+        }
     }
 
     /** Suggests the router address from the current Wi-Fi network. */

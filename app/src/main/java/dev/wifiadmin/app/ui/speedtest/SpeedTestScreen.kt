@@ -83,6 +83,9 @@ fun SpeedTestScreen(
     viewModel: SpeedTestViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -106,6 +109,9 @@ fun SpeedTestScreen(
             onDismissConsent = viewModel::dismissConsent,
             onAcceptConsent = viewModel::acceptConsentAndStart,
             modifier = Modifier.padding(innerPadding),
+            localNetworkPermissionState = localNetworkPermissionState,
+            onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
+            onOpenAppSettings = onOpenAppSettings,
         )
     }
 }
@@ -119,6 +125,9 @@ fun SpeedTestContent(
     onDismissConsent: () -> Unit,
     onAcceptConsent: () -> Unit,
     modifier: Modifier = Modifier,
+    localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
+    onRequestLocalNetworkPermission: (() -> Unit)? = null,
+    onOpenAppSettings: (() -> Unit)? = null,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("speedtest_list"),
@@ -258,6 +267,7 @@ fun SpeedTestContent(
 
         if (state.failure != null && state.failure !is SpeedTestFailure.Disabled) {
             item(key = "error") {
+                val isPermission = state.failure is SpeedTestFailure.PermissionRequired
                 Card(
                     modifier = Modifier.fillMaxWidth()
                         .semantics { liveRegion = LiveRegionMode.Assertive },
@@ -271,6 +281,31 @@ fun SpeedTestContent(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
+                        if (isPermission) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                                modifier = Modifier.padding(top = WifiDims.Space2),
+                            ) {
+                                if (localNetworkPermissionState?.canAskAgain == true &&
+                                    onRequestLocalNetworkPermission != null
+                                ) {
+                                    Button(
+                                        onClick = onRequestLocalNetworkPermission,
+                                        modifier = Modifier.testTag("speedtest_permission_allow"),
+                                    ) {
+                                        Text("Autoriser l'accès")
+                                    }
+                                }
+                                if (onOpenAppSettings != null) {
+                                    TextButton(
+                                        onClick = onOpenAppSettings,
+                                        modifier = Modifier.testTag("speedtest_permission_settings"),
+                                    ) {
+                                        Text("Ouvrir les paramètres")
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

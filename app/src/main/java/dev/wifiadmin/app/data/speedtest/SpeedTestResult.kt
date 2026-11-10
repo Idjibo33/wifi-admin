@@ -58,4 +58,12 @@ sealed interface SpeedTestFailure {
     data object Timeout : SpeedTestFailure
     data object Incomplete : SpeedTestFailure
     data object Unexpected : SpeedTestFailure
+
+    /**
+     * L'autorisation du réseau local est requise/refusée (vérifiée).
+     *
+     * Aucun socket n'est ouvert, aucun octet n'est transféré. Après accord,
+     * le repository reste Idle : seul le tap utilisateur relance une mesure.
+     */
+    data object PermissionRequired : SpeedTestFailure
 }

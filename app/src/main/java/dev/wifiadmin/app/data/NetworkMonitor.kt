@@ -63,4 +63,16 @@ interface NetworkMonitor {
 
     /** The status right now, without registering anything. */
     fun currentStatus(): LocalNetworkStatus
+
+    /**
+     * Vrai si un réseau `TRANSPORT_VPN` est présent dans `allNetworks`.
+     *
+     * Fait factuel, **jamais** un verdict d'inaccessibilité LAN : un VPN en
+     * split-tunnel autorisant le LAN coexiste avec ce fait. Les consommateurs
+     * doivent l'afficher comme une indication prudente uniquement quand un
+     * échec routeur/timeout coexiste (voir [diagnoseNetwork]).
+     *
+     * Défaut `false` pour compatibilité des fakes JVM.
+     */
+    fun isVpnPresent(): Boolean = false
 }

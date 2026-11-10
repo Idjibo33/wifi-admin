@@ -11,8 +11,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
-        Android 16+ (API 36) protects local network access behind a runtime
-        permission. Without it, connections to 192.168.1.1 are blocked.
+        Android 17+ (API 37) with targetSdk 37+ protects local network access
+        behind a runtime permission. Without it, connections to 192.168.1.1 are blocked.
     -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 

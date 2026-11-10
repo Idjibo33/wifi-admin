@@ -57,6 +57,15 @@ class RouterRepository(
      * list, and never from a snapshot restored from the disk.
      */
     private val metadataStore: DeviceMetadataStorage? = null,
+    /**
+     * Le point de passage unique de l'autorisation du réseau local.
+     *
+     * Optionnel : sans lui, le repository se comporte exactement comme avant
+     * (tests historiques). En production, [dev.wifiadmin.app.AppContainer]
+     * passe toujours le gateway, ce qui garantit qu'aucune connexion LAN
+     * prématurée n'est ouverte sous Android 17+ sans autorisation.
+     */
+    private val localNetworkPermissionGateway: LocalNetworkPermissionGateway? = null,
 ) {
 
     private val mutex = Mutex()
@@ -131,6 +140,24 @@ class RouterRepository(
      */
     internal var onNetworkRestored: (() -> Unit)? = null
 
+    /**
+     * Called when the local-network permission is revoked.
+     *
+     * L'application suspend le polling et annule un speed test en cours
+     * (jamais de retry agressif, jamais de timeout répété).
+     */
+    internal var onLocalNetworkPermissionRevoked: (() -> Unit)? = null
+
+    /**
+     * Called when the local-network permission comes back (dialogue ou retour
+     * des réglages).
+     *
+     * L'application oublie les échecs causés par l'absence d'autorisation
+     * et reprend une seule lecture si la session est déjà ouverte. Aucun
+     * nouveau benchmark n'est déclenché.
+     */
+    internal var onLocalNetworkPermissionRestored: (() -> Unit)? = null
+
     private val _state = MutableStateFlow(RouterUiState())
     val state: StateFlow<RouterUiState> = _state.asStateFlow()
 
@@ -160,6 +187,25 @@ class RouterRepository(
         mutex.withLock {
             val normalizedHost = host.trim()
             val normalizedUsername = username.trim()
+
+            // Gate permission SYNCHRONE : aucune connexion LAN prématurée.
+            // Vérifiée sous le verrou de session, avant même l'ouverture de
+            // socket. Un timeout ne devient jamais « permission refusée » :
+            // seule la vérification réelle de l'état pose cette erreur.
+            if (localNetworkPermissionGateway?.state?.value?.blocksLocalNetwork == true) {
+                val failure = RouterUnavailableException.LocalNetworkPermissionDenied(null)
+                _state.value = _state.value.copy(
+                    connection = ConnectionState.Error(failure),
+                    snapshot = null,
+                    lastRefreshMillis = null,
+                    snapshotOrigin = SnapshotOrigin.NONE,
+                    payloadAbsent = false,
+                    isRefreshing = false,
+                    error = failure,
+                )
+                return@withLock false
+            }
+
             val startGeneration = ++generation
 
             _state.value = _state.value.copy(
@@ -413,6 +459,23 @@ class RouterRepository(
         force: Boolean,
         maxAgeMillis: Long = 0L,
     ): Result<DeviceSnapshot> {
+        // Gate permission PRÉCOCE : évite les timeouts répétés et les
+        // retries inutiles quand l'autorisation est absente. La session et
+        // le snapshot sont conservés (l'échec ne déconnecte pas).
+        if (localNetworkPermissionGateway?.state?.value?.blocksLocalNetwork == true) {
+            val failure = RouterUnavailableException.LocalNetworkPermissionDenied(null)
+            val current = _state.value
+            val sessionKept = current.connection is ConnectionState.Connected ||
+                current.connection is ConnectionState.Cooldown ||
+                current.connection is ConnectionState.NetworkChanged
+            if (sessionKept) {
+                _state.value = current.copy(isRefreshing = false, error = failure)
+            } else if (current.connection is ConnectionState.Error) {
+                _state.value = current.copy(error = failure)
+            }
+            return Result.failure(failure)
+        }
+
         if (!force && !isStale(maxAgeMillis)) {
             // Fresh enough: no read, and the caller keeps what it has.
             return Result.success(
@@ -573,12 +636,15 @@ class RouterRepository(
             }
 
             // Everything else keeps the session: a timeout, an unreachable
-            // router or a malformed reply are **not** an expiry.
+            // router or a malformed reply are **not** an expiry. The
+            // permission case keeps the session too: the router still knows
+            // it, the system simply blocks the traffic.
             is RouterUnavailableException.Unreachable,
             is RouterUnavailableException.Timeout,
             is RouterUnavailableException.AuthenticationFailed,
             is RouterUnavailableException.UnexpectedResponse,
             is RouterUnavailableException.NotConnected,
+            is RouterUnavailableException.LocalNetworkPermissionDenied,
             -> _state.value = _state.value.copy(
                 isRefreshing = false,
                 error = error,
@@ -608,6 +674,65 @@ class RouterRepository(
     /** Marks the beginning of a refresh, so the UI can show a spinner. */
     fun setRefreshing(refreshing: Boolean) {
         _state.value = _state.value.copy(isRefreshing = refreshing)
+    }
+
+    // -----------------------------------------------------------------
+    // Autorisation du réseau local (Mission 15)
+    // -----------------------------------------------------------------
+
+    /**
+     * La permission vient d'être révoquée (retour des réglages).
+     *
+     * Règle prudente : la session et le snapshot sont **conservés** — le
+     * routeur peut encore connaître la session, le système bloque simplement
+     * le trafic. Les lectures sont suspendues ; aucun timeout répété n'est
+     * lancé ; l'application arrête le polling via
+     * [onLocalNetworkPermissionRevoked].
+     */
+    fun onLocalNetworkPermissionRevoked() {
+        val current = _state.value
+        val sessionOpen = current.connection is ConnectionState.Connected ||
+            current.connection is ConnectionState.Cooldown ||
+            current.connection is ConnectionState.NetworkChanged
+        invalidateFreshness()
+        if (sessionOpen) {
+            _state.value = current.copy(
+                isRefreshing = false,
+                error = RouterUnavailableException.LocalNetworkPermissionDenied(null),
+            )
+            onLocalNetworkPermissionRevoked?.invoke()
+        }
+    }
+
+    /**
+     * La permission vient d'être réaccordée (dialogue ou retour des réglages).
+     *
+     * Effet : l'erreur de permission est effacée, les échecs causés par son
+     * absence sont oubliés ([onLocalNetworkPermissionRestored] → l'application
+     * relance une seule lecture si la session est ouverte), et le polling
+     * reprend. Aucun nouveau benchmark n'est déclenché ; aucun redémarrage
+     * n'est requis.
+     */
+    fun onLocalNetworkPermissionGranted() {
+        val current = _state.value
+        when (val connection = current.connection) {
+            is ConnectionState.Error -> {
+                if (connection.exception is RouterUnavailableException.LocalNetworkPermissionDenied) {
+                    _state.value = current.copy(
+                        connection = ConnectionState.Disconnected,
+                        error = null,
+                    )
+                }
+            }
+            ConnectionState.Connected, is ConnectionState.Cooldown,
+            is ConnectionState.NetworkChanged -> {
+                if (current.error is RouterUnavailableException.LocalNetworkPermissionDenied) {
+                    _state.value = current.copy(error = null)
+                }
+            }
+            else -> Unit
+        }
+        onLocalNetworkPermissionRestored?.invoke()
     }
 
     /**

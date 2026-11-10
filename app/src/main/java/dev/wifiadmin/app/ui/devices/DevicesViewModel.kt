@@ -60,6 +60,8 @@ data class DevicesUiState(
      * The reads are suspended and the last known devices stay on screen.
      */
     val isNetworkChanged: Boolean = false,
+    /** True when the local-network permission is required/refused. */
+    val isPermissionDenied: Boolean = false,
     /**
      * The local metadata of the devices, indexed by their identity.
      *
@@ -77,7 +79,7 @@ data class DevicesUiState(
     /** True when the list on screen is not a fresh, complete read. */
     val hasStaleData: Boolean
         get() = hasSnapshot &&
-            (isFromCache || isSyncFailed || payloadAbsent || isNetworkChanged)
+            (isFromCache || isSyncFailed || payloadAbsent || isNetworkChanged || isPermissionDenied)
 
     /**
      * Why the data on screen is not fresh.
@@ -87,6 +89,7 @@ data class DevicesUiState(
      */
     val staleDataReason: StaleDataReason?
         get() = when {
+            isPermissionDenied -> StaleDataReason.PERMISSION_DENIED
             isNetworkChanged -> StaleDataReason.NETWORK_CHANGED
             isFromCache -> StaleDataReason.CACHE
             payloadAbsent -> StaleDataReason.INCOMPLETE_REPLY
@@ -324,6 +327,7 @@ class DevicesViewModel(
                         payloadAbsent = false,
                         hasSnapshot = false,
                         isLoading = false,
+                        isPermissionDenied = false,
                         // The metadata are local, but they describe the
                         // devices of an authenticated session: they leave
                         // the memory with the devices themselves.
@@ -336,6 +340,21 @@ class DevicesViewModel(
                         isLoading = false,
                         isNetworkChanged = true,
                     )
+                    if (state.error is RouterUnavailableException.LocalNetworkPermissionDenied) {
+                        _state.value = _state.value.copy(isPermissionDenied = true)
+                    }
+                } else {
+                    if (state.error is RouterUnavailableException.LocalNetworkPermissionDenied) {
+                        _state.value = _state.value.copy(
+                            isPermissionDenied = true,
+                            errorMessage = state.error.userMessage(),
+                        )
+                    } else if (_state.value.isPermissionDenied) {
+                        _state.value = _state.value.copy(
+                            isPermissionDenied = false,
+                            errorMessage = null,
+                        )
+                    }
                 }
             }
         }

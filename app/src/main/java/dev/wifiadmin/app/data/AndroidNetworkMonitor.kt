@@ -115,13 +115,51 @@ class AndroidNetworkMonitor(
 
     override fun currentStatus(): LocalNetworkStatus {
         val manager = connectivity ?: return LocalNetworkStatus.NotOnWifi
+        // Sous VPN, `activeNetwork` est le VPN, pas le Wi-Fi : lire le réseau
+        // actif seul retournerait NotOnWifi alors même que le Wi-Fi est
+        // présent dans `allNetworks`. On cherche donc le candidat Wi-Fi
+        // (non-hotspot) avec une route par défaut, comme dans `observeStatus`.
+        val wifi = manager.allNetworks.firstOrNull { candidate ->
+            val capabilities = manager.getNetworkCapabilities(candidate) ?: return@firstOrNull false
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        }
+        if (wifi != null) {
+            val capabilities = manager.getNetworkCapabilities(wifi)
+            return statusOf(
+                capabilities = capabilities,
+                properties = manager.getLinkProperties(wifi),
+            )
+        }
+        // Aucun Wi-Fi vivant : fallback sur l'actif pour distinguer NoWifi /
+        // NotOnWifi (mobile, Ethernet...).
         val network = manager.activeNetwork ?: return LocalNetworkStatus.NoWifi
         val capabilities = manager.getNetworkCapabilities(network)
             ?: return LocalNetworkStatus.NotOnWifi
+        // Un réseau actif sans transport Wi-Fi n'est pas le LAN.
+        val isWifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        val isCellular = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        if (isWifi && isCellular) return LocalNetworkStatus.NotOnWifi
+        if (!isWifi) return LocalNetworkStatus.NotOnWifi
         return statusOf(
             capabilities = capabilities,
             properties = manager.getLinkProperties(network),
         )
+    }
+
+    /**
+     * Vrai si un réseau VPN est présent dans `allNetworks`.
+     *
+     * Ce n'est jamais un verdict d'inaccessibilité : le VPN peut être en
+     * split-tunnel autorisant le LAN. Seules les sonde de joignabilité le
+     * prouveraient — jamais la seule présence de `TRANSPORT_VPN`.
+     */
+    override fun isVpnPresent(): Boolean {
+        val manager = connectivity ?: return false
+        return manager.allNetworks.any { candidate ->
+            val capabilities = manager.getNetworkCapabilities(candidate) ?: return@any false
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
     }
 
     private fun statusOf(

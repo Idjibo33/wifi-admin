@@ -56,6 +56,12 @@ data class DashboardUiState(
      * The reads are suspended and the last known devices stay on screen.
      */
     val isNetworkChanged: Boolean = false,
+    /**
+     * True when the local-network permission is required/refused.
+     *
+     * Prioritaire sur les autres raisons : c'est la cause réparable.
+     */
+    val isPermissionDenied: Boolean = false,
 ) {
     /** True when the screen has nothing to show but a spinner. */
     val isFirstLoad: Boolean get() = isLoading && !hasSnapshot
@@ -66,16 +72,17 @@ data class DashboardUiState(
     /** True when the snapshot on screen is not a fresh, complete read. */
     val hasStaleData: Boolean
         get() = hasSnapshot &&
-            (isFromCache || isSyncFailed || payloadAbsent || isNetworkChanged)
+            (isFromCache || isSyncFailed || payloadAbsent || isNetworkChanged || isPermissionDenied)
 
     /**
      * Why the data on screen is not fresh.
      *
-     * The order matters: the network change is the most specific reason, and
-     * it comes before the generic synchronisation failure.
+     * La permission refusée est prioritaire : c'est l'action réparable, avant
+     * le changement de réseau.
      */
     val staleDataReason: StaleDataReason?
         get() = when {
+            isPermissionDenied -> StaleDataReason.PERMISSION_DENIED
             isNetworkChanged -> StaleDataReason.NETWORK_CHANGED
             isFromCache -> StaleDataReason.CACHE
             payloadAbsent -> StaleDataReason.INCOMPLETE_REPLY
@@ -245,6 +252,7 @@ class DashboardViewModel(
                         hasSnapshot = false,
                         isLoading = false,
                         isRefreshing = false,
+                        isPermissionDenied = false,
                     )
                 } else if (state.connection is ConnectionState.NetworkChanged) {
                     // The network changed: the data on screen is the last
@@ -254,6 +262,24 @@ class DashboardViewModel(
                         isRefreshing = false,
                         isNetworkChanged = true,
                     )
+                    // Une permission refusée domine le changement de réseau.
+                    if (state.error is RouterUnavailableException.LocalNetworkPermissionDenied) {
+                        _state.value = _state.value.copy(isPermissionDenied = true)
+                    }
+                } else {
+                    // Révoquée pendant la session : session conservée, lectures
+                    // suspendues, cause réparable affichée.
+                    if (state.error is RouterUnavailableException.LocalNetworkPermissionDenied) {
+                        _state.value = _state.value.copy(
+                            isPermissionDenied = true,
+                            errorMessage = state.error.userMessage(),
+                        )
+                    } else if (_state.value.isPermissionDenied) {
+                        _state.value = _state.value.copy(
+                            isPermissionDenied = false,
+                            errorMessage = null,
+                        )
+                    }
                 }
             }
         }

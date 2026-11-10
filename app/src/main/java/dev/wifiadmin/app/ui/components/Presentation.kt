@@ -125,6 +125,12 @@ const val NETWORK_CHANGED_MESSAGE =
     "Le réseau a changé. Le routeur n'est plus joignable ici."
 
 /**
+ * The message shown when the local-network permission is required or denied.
+ */
+const val LOCAL_NETWORK_PERMISSION_MESSAGE =
+    "Accès au réseau local requis pour joindre le routeur."
+
+/**
  * The reason the data on screen is not fresh.
  *
  * The screens show a different banner for each: the user must be able to
@@ -142,6 +148,9 @@ enum class StaleDataReason {
 
     /** The router answered without any device list. */
     INCOMPLETE_REPLY,
+
+    /** L'autorisation du réseau local est requise/refusée (vérifiée). */
+    PERMISSION_DENIED,
 }
 
 /**
@@ -174,6 +183,12 @@ fun staleDataMessage(
             "Réponse incomplète du routeur — dernières données connues le $date."
         } else {
             "Réponse incomplète du routeur : aucune liste d'appareils reçue."
+        }
+
+        StaleDataReason.PERMISSION_DENIED -> if (date != null) {
+            "Accès au réseau local requis — dernières données connues le $date."
+        } else {
+            "Accès au réseau local requis pour joindre le routeur."
         }
     }
 }
@@ -304,4 +319,6 @@ fun RouterUnavailableException.userMessage(): String = when (this) {
         } ?: "Le routeur refuse temporairement les connexions. Patientez quelques minutes."
     is RouterUnavailableException.UnexpectedResponse ->
         "Le routeur a répondu de façon inattendue."
+    is RouterUnavailableException.LocalNetworkPermissionDenied ->
+        "Accès au réseau local requis. Autorisez l'accès pour joindre le routeur."
 }
