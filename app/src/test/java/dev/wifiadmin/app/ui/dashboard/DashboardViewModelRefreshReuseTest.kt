@@ -73,4 +73,44 @@ class DashboardViewModelRefreshReuseTest {
         )
         assertEquals("no second router request", 1, adapter.fetchCalls)
     }
+
+    /**
+     * A reused manual refresh must not silently clear stale flags
+     * (isSyncFailed, payloadAbsent): those are only reconciled by a
+     * genuine new read emission from observeReads().
+     */
+    @Test
+    fun `a reused manual refresh preserves stale flags`() = runTest(dispatcher) {
+        val adapter = FakeRouterAdapter {
+            FakeRouterAdapter.oneDevice(1_000L)
+        }
+        val repository = RouterRepository(
+            adapter = adapter,
+            ioDispatcher = dispatcher,
+            clock = TestAppClock(),
+            freshness = ReadFreshnessPolicy.Default,
+        )
+        repository.connect("192.168.1.1", "admin", "secret")
+        repository.refreshForced()
+        assertEquals(1, adapter.fetchCalls)
+
+        val coordinator = TestHarness.coordinator(repository, backgroundScope)
+        val viewModel = DashboardViewModel(repository, coordinator)
+
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.hasSnapshot)
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertFalse(
+            "the spinner must stop after a reused manual refresh",
+            viewModel.state.value.isRefreshing,
+        )
+        assertTrue(
+            "the snapshot must be preserved after a reused refresh",
+            viewModel.state.value.hasSnapshot,
+        )
+        assertEquals("no second router request", 1, adapter.fetchCalls)
+    }
 }

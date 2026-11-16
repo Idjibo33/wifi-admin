@@ -71,7 +71,7 @@ fun LoginScreen(
     localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
     onRequestLocalNetworkPermission: (() -> Unit)? = null,
     onOpenAppSettings: (() -> Unit)? = null,
-    vpnPresent: Boolean = false,
+    isVpnPresent: () -> Boolean = { false },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val result by viewModel.result.collectAsStateWithLifecycle()
@@ -264,9 +264,7 @@ fun LoginScreen(
             // Indication prudente VPN : uniquement quand un échec timeout ou
             // routeur inaccessible coexiste avec un VPN présent. Jamais une
             // cause certaine. Ne pas confondre avec un refus de permission.
-            if (vpnPresent && (result == LoginResult.Timeout ||
-                    result == LoginResult.NetworkError)
-            ) {
+            if (shouldShowLoginVpnHint(result, isVpnPresent())) {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer
@@ -316,6 +314,16 @@ fun LoginScreen(
         }
     }
 }
+
+/**
+ * Décide si l'indication VPN doit être affichée sur l'écran de connexion.
+ *
+ * Prudente : uniquement quand un échec timeout ou routeur inaccessible
+ * coexiste avec un VPN présent. Ne confond jamais avec un refus de permission
+ * (qui produit `LocalNetworkPermissionDenied`, pas `Timeout`/`NetworkError`).
+ */
+fun shouldShowLoginVpnHint(result: LoginResult, vpnPresent: Boolean): Boolean =
+    vpnPresent && (result == LoginResult.Timeout || result == LoginResult.NetworkError)
 
 @Composable
 private fun DetectedRouterRow(host: String, wasDetected: Boolean) {

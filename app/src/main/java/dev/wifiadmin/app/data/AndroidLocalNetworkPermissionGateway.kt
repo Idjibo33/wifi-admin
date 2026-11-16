@@ -84,9 +84,10 @@ class AndroidLocalNetworkPermissionGateway(
         ) {
             return false
         }
-        // Une demande est réellement lancée : on mémorise cet historique
-        // pour survivre à une destruction du processus.
-        persistPreviouslyRefused(true)
+        // Le lancement ne constitue pas un refus confirmé : on persiste
+        // l'historique uniquement dans `onRequestResult`, quand le système
+        // a réellement répondu. Un dialogue interrompu ou un processus
+        // détruit ne doit pas figer l'état à « refusé ».
         _state.value = fresh.copy(isRequestInFlight = true)
         launch(ACCESS_LOCAL_NETWORK_PERMISSION)
         return true

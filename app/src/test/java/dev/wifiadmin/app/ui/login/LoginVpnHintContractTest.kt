@@ -1,5 +1,6 @@
 package dev.wifiadmin.app.ui.login
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -20,11 +21,11 @@ class LoginVpnHintContractTest {
     }
 
     @Test
-    fun `the login screen accepts a vpnPresent parameter`() {
+    fun `the login screen accepts an isVpnPresent lambda`() {
         val source = loginScreenSource()
         assertTrue(
-            "LoginScreen must accept vpnPresent to show the VPN hint",
-            source.contains("vpnPresent: Boolean = false"),
+            "LoginScreen must accept isVpnPresent lambda for fresh VPN state",
+            source.contains("isVpnPresent: () -> Boolean"),
         )
     }
 
@@ -62,5 +63,37 @@ class LoginVpnHintContractTest {
             "LoginScreen must gate the VPN hint on Timeout or NetworkError",
             source.contains("LoginResult.Timeout") && source.contains("LoginResult.NetworkError"),
         )
+    }
+
+    // --- Behavioral tests for shouldShowLoginVpnHint ---
+
+    @Test
+    fun `vpn inactive and connection success shows no hint`() {
+        assertFalse(shouldShowLoginVpnHint(LoginResult.Success, false))
+    }
+
+    @Test
+    fun `vpn active and connection success shows no hint`() {
+        assertFalse(shouldShowLoginVpnHint(LoginResult.Success, true))
+    }
+
+    @Test
+    fun `vpn active and timeout shows hint`() {
+        assertTrue(shouldShowLoginVpnHint(LoginResult.Timeout, true))
+    }
+
+    @Test
+    fun `vpn active and unreachable shows hint`() {
+        assertTrue(shouldShowLoginVpnHint(LoginResult.NetworkError, true))
+    }
+
+    @Test
+    fun `permission denied with vpn active shows no hint`() {
+        assertFalse(shouldShowLoginVpnHint(LoginResult.LocalNetworkPermissionDenied, true))
+    }
+
+    @Test
+    fun `timeout without vpn shows no hint`() {
+        assertFalse(shouldShowLoginVpnHint(LoginResult.Timeout, false))
     }
 }

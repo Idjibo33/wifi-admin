@@ -216,13 +216,12 @@ class DashboardViewModel(
             repository.refresh().onSuccess {
                 // A reused read returns success without emitting a new read
                 // state (the coordinator keeps the snapshot it already has):
-                // reconcile the UI here, otherwise the spinner spins forever
-                // and stale flags linger.
+                // only clear the spinner here. Stale flags (isSyncFailed,
+                // payloadAbsent) are preserved unless observeReads() receives
+                // a genuine new emission, which only happens on a real read.
                 _state.value = _state.value.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    isSyncFailed = false,
-                    payloadAbsent = false,
                 )
             }.onFailure { error ->
                 _state.value = _state.value.copy(
