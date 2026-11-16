@@ -1,9 +1,13 @@
 package dev.wifiadmin.app.ui.speedtest
 
+import dev.wifiadmin.app.data.speedtest.SpeedTestBudget
 import dev.wifiadmin.app.data.speedtest.SpeedTestFailure
 import dev.wifiadmin.app.data.speedtest.SpeedTestPhase
+import dev.wifiadmin.app.data.speedtest.SpeedTestPolicy
 import dev.wifiadmin.app.data.speedtest.SpeedTestResult
 import dev.wifiadmin.app.ui.components.formatSnapshotDate
+import java.util.Locale
+import kotlin.math.roundToLong
 
 /** The exact sentences of the speed test screen: screens and tests share them. */
 object SpeedTestStrings {
@@ -17,8 +21,8 @@ object SpeedTestStrings {
     const val CANCELLED = "Test annulé. Le résultat précédent reste affiché."
     const val DISABLED = "Test de vitesse Internet indisponible dans cette version."
     const val DISABLED_BODY = "Aucun fournisseur de mesure n'est configuré : aucun endpoint public " +
-        "n'est à la fois autorisé, fiable et contrôlé sous les plafonds (20 Mo en téléchargement, " +
-        "10 Mo en envoi, 30 s). Rien ne quitte le téléphone. La liaison Wi-Fi ci-dessous reste " +
+        "n'est à la fois autorisé, fiable et contrôlé sous les plafonds de consommation de " +
+        "l'application. Rien ne quitte le téléphone. La liaison Wi-Fi ci-dessous reste " +
         "disponible, et le test est prêt à être branché sur un fournisseur validé."
     const val WIFI_GONE = "Wi-Fi indisponible. Connectez le téléphone au Wi-Fi du routeur pour lancer un test."
     const val INTERNET_GONE = "Wi-Fi connecté, mais Internet est indisponible."
@@ -128,15 +132,49 @@ fun effectiveTargetHost(providerLabel: String?, targetHost: String?): String? =
  * never a full URL and never an IP. Falls back to a generic sentence
  * when neither label nor host is known yet.
  */
-fun providerBannerText(providerLabel: String?, targetHost: String?): String {
+fun providerBannerText(
+    providerLabel: String?,
+    targetHost: String?,
+    policy: SpeedTestPolicy = SpeedTestBudget.production,
+): String {
     val label = providerLabel?.trim().takeIf { !it.isNullOrEmpty() }
     val host = effectiveTargetHost(label, sanitizeHostLabel(targetHost))
     val head = if (label != null) "Fournisseur : $label" else SpeedTestStrings.CONFIGURED
     val destination = host?.let {
         if (label != null && label.contains(it)) "" else " · vers $it (HTTPS)"
     }.orEmpty()
-    return head + destination + " · Consommation max. 30 Mo/test"
+    return head + destination + " · Consommation max. ${maxConsumption(policy)}/test" +
+        if (SpeedTestBudget.isReduced(policy)) " · budget réduit de validation" else ""
 }
+
+/** Human byte budget: Ko under 1 Mio, Mo above (1 Mio = 1 048 576 octets). */
+fun formatBudgetBytes(bytes: Long): String {
+    if (bytes < 0) return SpeedTestStrings.UNKNOWN
+    val roundedKib = (bytes / 1024.0 * 100).roundToLong() / 100.0
+    return if (roundedKib < 1024.0) {
+        formatDecimal(roundedKib) + " Ko"
+    } else {
+        formatDecimal(bytes / 1_048_576.0) + " Mo"
+    }
+}
+
+/** Locale-independent decimal with a French comma, trailing zeros trimmed. */
+private fun formatDecimal(value: Double): String =
+    String.format(Locale.ROOT, "%.2f", value).trimEnd('0').trimEnd('.').replace('.', ',')
+
+/** Total ceiling of one run (download + upload). */
+fun maxConsumption(policy: SpeedTestPolicy): String =
+    formatBudgetBytes(policy.maxDownloadBytes + policy.maxUploadBytes)
+
+/** Duration ceiling in seconds, as shown in the consent dialog. */
+fun formatBudgetDuration(policy: SpeedTestPolicy): String =
+    formatDecimal(policy.maxDurationMillis / 1000.0) + " s"
+
+/** The exact caps sentence of the consent dialog, derived from the policy. */
+fun consentCapsLine(policy: SpeedTestPolicy): String =
+    "Plafonds : ${formatBudgetBytes(policy.maxDownloadBytes)} en téléchargement, " +
+        "${formatBudgetBytes(policy.maxUploadBytes)} en envoi, " +
+        "${formatBudgetDuration(policy)}."
 
 /** The consent-dialog server line: host-aware, or the disabled sentence. */
 fun consentServerLine(providerLabel: String?, targetHost: String?, disabled: Boolean): String {

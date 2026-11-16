@@ -134,7 +134,9 @@ class SpeedTestReuseTest {
                     MockResponse().setResponseCode(200)
                         .setHeader("Content-Type", "application/octet-stream")
                         .setBody(bigBody(10_000_000))
-                        .setBodyDelay(5, TimeUnit.SECONDS)
+                        // Keep the delay below MockWebServer's 5 s shutdown
+                        // budget so the suite stays deterministic.
+                        .setBodyDelay(2, TimeUnit.SECONDS)
                 } else if (request.method == "POST") {
                     request.body.readAll(object : okio.Sink {
                         override fun write(source: Buffer, byteCount: Long) {

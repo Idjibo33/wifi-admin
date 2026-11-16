@@ -3,12 +3,14 @@ package dev.wifiadmin.app.data.speedtest
 import dev.wifiadmin.app.data.AppClock
 import dev.wifiadmin.app.data.LocalNetworkStatus
 import dev.wifiadmin.app.data.NetworkMonitor
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -180,6 +182,13 @@ class SpeedTestRepository(
     private val _state = MutableStateFlow<SpeedTestState>(SpeedTestState.Idle)
     val state = _state.asStateFlow()
 
+    /**
+     * The caps this repository enforces (duration and backstop). The engine
+     * must be built with the same policy; exposing it lets the UI show the
+     * real budget instead of hardcoded production figures.
+     */
+    val caps: SpeedTestPolicy get() = policy
+
     /** True while a run owns the engine, including its final cleanup. */
     val isRunning: Boolean get() = running
 
@@ -256,6 +265,9 @@ class SpeedTestRepository(
     }
 
     private suspend fun execute(myGeneration: Int, expectedNetworkKey: String) {
+        // Set by the deadline watchdog below. Declared here so the
+        // cancellation handler can tell a timeout from a user cancel.
+        val deadlineReached = AtomicBoolean(false)
         try {
             // Revalidate after taking the slot: the network may have
             // changed between currentStatus() and the coroutine start.
@@ -273,24 +285,40 @@ class SpeedTestRepository(
                 publish(myGeneration, SpeedTestState.Cancelled)
                 return
             }
-            val result = withTimeout(policy.maxDurationMillis) {
-                engine.run { progress ->
-                    // Backstop on the reported counters (SEC-01, scope):
-                    // this layer kills a run whose reported progress
-                    // exceeds the prepaid caps. It does NOT prove a
-                    // misbehaving engine never moved extra bytes on the
-                    // wire between progress events: only the engine's
-                    // own stream-byte cap guarantees that. Both layers
-                    // together cover reporting and wire.
-                    val overDownload = progress.downloadBytes > policy.maxDownloadBytes
-                    val overUpload = progress.uploadBytes > policy.maxUploadBytes
-                    val overTotal = progress.downloadBytes + progress.uploadBytes >
-                        policy.maxDownloadBytes + policy.maxUploadBytes
-                    if (overDownload || overUpload || overTotal) {
-                        runCatching { engine.cancel() }
-                        throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
+            // Logical deadline. withTimeout alone cannot preempt the
+            // blocking OkHttp reads of the real engine, so a watchdog
+            // also calls engine.cancel(): closing the call is what makes
+            // the deadline observable. The byte caps remain the hard
+            // safety limit; this bounds the wall-clock run.
+            val result = coroutineScope {
+                val watchdog = launch {
+                    delay(policy.maxDurationMillis)
+                    deadlineReached.set(true)
+                    runCatching { engine.cancel() }
+                }
+                try {
+                    withTimeout(policy.maxDurationMillis) {
+                        engine.run { progress ->
+                            // Backstop on the reported counters (SEC-01, scope):
+                            // this layer kills a run whose reported progress
+                            // exceeds the prepaid caps. It does NOT prove a
+                            // misbehaving engine never moved extra bytes on the
+                            // wire between progress events: only the engine's
+                            // own stream-byte cap guarantees that. Both layers
+                            // together cover reporting and wire.
+                            val overDownload = progress.downloadBytes > policy.maxDownloadBytes
+                            val overUpload = progress.uploadBytes > policy.maxUploadBytes
+                            val overTotal = progress.downloadBytes + progress.uploadBytes >
+                                policy.maxDownloadBytes + policy.maxUploadBytes
+                            if (overDownload || overUpload || overTotal) {
+                                runCatching { engine.cancel() }
+                                throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
+                            }
+                            publish(myGeneration, progress)
+                        }
                     }
-                    publish(myGeneration, progress)
+                } finally {
+                    watchdog.cancel()
                 }
             }
             // Same check on the terminal result: an engine that never
@@ -319,7 +347,14 @@ class SpeedTestRepository(
         } catch (e: SpeedTestFailureException) {
             publish(myGeneration, SpeedTestState.Failed(e.failure))
         } catch (e: CancellationException) {
-            publish(myGeneration, SpeedTestState.Cancelled)
+            // When the watchdog fired, the deadline closed the in-flight
+            // call and surfaced as a cancellation: report a timeout, not a
+            // user cancellation.
+            if (deadlineReached.get()) {
+                publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Timeout))
+            } else {
+                publish(myGeneration, SpeedTestState.Cancelled)
+            }
             throw e
         } catch (t: Throwable) {
             publish(myGeneration, SpeedTestState.Failed(SpeedTestFailure.Unexpected))

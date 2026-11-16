@@ -1,5 +1,6 @@
 package dev.wifiadmin.app.ui.speedtest
 
+import dev.wifiadmin.app.data.speedtest.SpeedTestBudget
 import dev.wifiadmin.app.data.speedtest.SpeedTestFailure
 import dev.wifiadmin.app.data.speedtest.SpeedTestResult
 import org.junit.Assert.assertEquals
@@ -112,5 +113,59 @@ class SpeedTestPresentationTest {
         assertFalse(
             failureMessage(SpeedTestFailure.Timeout).equals(failureMessage(SpeedTestFailure.Incomplete)),
         )
+    }
+
+    // -- Budget shown to the user ------------------------------------------
+
+    @Test fun `budget bytes use Ko below one Mio and Mo above`() {
+        assertEquals("20 Mo", formatBudgetBytes(20L * 1024 * 1024))
+        assertEquals("1 Mo", formatBudgetBytes(1L * 1024 * 1024))
+        assertEquals("256 Ko", formatBudgetBytes(256L * 1024))
+        assertEquals("1,25 Mo", formatBudgetBytes(1L * 1024 * 1024 + 256L * 1024))
+        assertEquals("0 Ko", formatBudgetBytes(0L))
+        assertEquals("1023 Ko", formatBudgetBytes(1023L * 1024))
+        assertEquals("1,5 Mo", formatBudgetBytes(1536L * 1024))
+        // Rounds up to one Mio rather than printing an odd "1024 Ko".
+        assertEquals("1 Mo", formatBudgetBytes(1_048_575L))
+        assertEquals("—", formatBudgetBytes(-1L))
+    }
+
+    @Test fun `reduced consent line states the real caps`() {
+        val reduced = SpeedTestBudget.fromCaps(
+            maxDownloadBytes = 1L shl 20,
+            maxUploadBytes = 256L * 1024,
+            maxDurationMillis = 10_000L,
+        )
+        assertEquals(
+            "Plafonds : 1 Mo en téléchargement, 256 Ko en envoi, 10 s.",
+            consentCapsLine(reduced),
+        )
+    }
+
+    @Test fun `production consent line keeps the historical contract`() {
+        assertEquals(
+            "Plafonds : 20 Mo en téléchargement, 10 Mo en envoi, 30 s.",
+            consentCapsLine(SpeedTestBudget.production),
+        )
+    }
+
+    @Test fun `reduced banner shows the real total and the validation marker`() {
+        val reduced = SpeedTestBudget.fromCaps(
+            maxDownloadBytes = 1L shl 20,
+            maxUploadBytes = 256L * 1024,
+            maxDurationMillis = 10_000L,
+        )
+        val text = providerBannerText("LibreSpeed", "speed.example.org", reduced)
+        assertTrue("real total expected: $text", text.contains("Consommation max. 1,25 Mo/test"))
+        assertTrue("validation marker expected: $text", text.contains("budget réduit de validation"))
+    }
+
+    @Test fun `production banner has no reduced marker`() {
+        val text = providerBannerText("LibreSpeed", "speed.example.org", SpeedTestBudget.production)
+        assertEquals(
+            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 30 Mo/test",
+            text,
+        )
+        assertFalse(text.contains("budget réduit"))
     }
 }

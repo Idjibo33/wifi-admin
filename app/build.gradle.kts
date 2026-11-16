@@ -13,6 +13,32 @@ val speedtestDebugUrl: String =
         ?: System.getenv("SPEEDTEST_URL_DEBUG")?.takeIf { it.isNotBlank() }
         ?: "http://127.0.0.1:8280"
 
+// Mission 16: reduced transfer budget for a debug validation run.
+// Production caps stay authoritative: SpeedTestBudget.fromCaps() re-clamps
+// any value above them, so no Gradle property can widen the transfer.
+// These three literals must stay equal to the SpeedTestPolicy() defaults
+// (app/src/main/.../speedtest/SpeedTestPolicy.kt): the Kotlin policy is the
+// source of truth, this is only its BuildConfig copy for release evidence.
+fun positiveLongProperty(name: String, default: Long): Long =
+    (findProperty(name) as? String)?.toLongOrNull()?.takeIf { it > 0 } ?: default
+
+val speedTestProductionDownloadBytes = 20L * 1024 * 1024
+val speedTestProductionUploadBytes = 10L * 1024 * 1024
+val speedTestProductionDurationMillis = 30_000L
+
+val speedTestDownloadBytes = positiveLongProperty(
+    "wifiadmin.speedtestMaxDownloadBytes",
+    speedTestProductionDownloadBytes,
+)
+val speedTestUploadBytes = positiveLongProperty(
+    "wifiadmin.speedtestMaxUploadBytes",
+    speedTestProductionUploadBytes,
+)
+val speedTestDurationMillis = positiveLongProperty(
+    "wifiadmin.speedtestMaxDurationMillis",
+    speedTestProductionDurationMillis,
+)
+
 android {
     namespace = "dev.wifiadmin.app"
     compileSdk = 37
@@ -28,6 +54,10 @@ android {
 
         // LibreSpeed endpoint: empty = disabled. Never a public server by default.
         buildConfigField("String", "SPEEDTEST_BASE_URL", "\"\"")
+        // Production transfer budget (source of truth for the clamped debug override).
+        buildConfigField("long", "SPEEDTEST_MAX_DOWNLOAD_BYTES", "${speedTestProductionDownloadBytes}L")
+        buildConfigField("long", "SPEEDTEST_MAX_UPLOAD_BYTES", "${speedTestProductionUploadBytes}L")
+        buildConfigField("long", "SPEEDTEST_MAX_DURATION_MILLIS", "${speedTestProductionDurationMillis}L")
     }
 
     buildTypes {
@@ -36,6 +66,10 @@ android {
             // -Pwifiadmin.speedtestBaseUrl=https://192.168.1.174:8443 after explicit
             // firewall authorisation). Never applied to release.
             buildConfigField("String", "SPEEDTEST_BASE_URL", "\"$speedtestDebugUrl\"")
+            // Debug-only, never above production (re-clamped by SpeedTestBudget).
+            buildConfigField("long", "SPEEDTEST_MAX_DOWNLOAD_BYTES", "${speedTestDownloadBytes}L")
+            buildConfigField("long", "SPEEDTEST_MAX_UPLOAD_BYTES", "${speedTestUploadBytes}L")
+            buildConfigField("long", "SPEEDTEST_MAX_DURATION_MILLIS", "${speedTestDurationMillis}L")
         }
         release {
             isMinifyEnabled = true
