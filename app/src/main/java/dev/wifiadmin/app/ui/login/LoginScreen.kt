@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.data.VPN_MAY_AFFECT_MESSAGE
 import dev.wifiadmin.app.ui.components.EXPIRY_MESSAGE
 import dev.wifiadmin.app.ui.components.LOCAL_NETWORK_PERMISSION_MESSAGE
 import dev.wifiadmin.app.ui.theme.WifiAdminTheme
@@ -70,6 +71,7 @@ fun LoginScreen(
     localNetworkPermissionState: dev.wifiadmin.app.data.LocalNetworkPermissionState? = null,
     onRequestLocalNetworkPermission: (() -> Unit)? = null,
     onOpenAppSettings: (() -> Unit)? = null,
+    vpnPresent: Boolean = false,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val result by viewModel.result.collectAsStateWithLifecycle()
@@ -257,6 +259,52 @@ fun LoginScreen(
                     onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
                     onOpenAppSettings = onOpenAppSettings,
                 )
+            }
+
+            // Indication prudente VPN : uniquement quand un échec timeout ou
+            // routeur inaccessible coexiste avec un VPN présent. Jamais une
+            // cause certaine. Ne pas confondre avec un refus de permission.
+            if (vpnPresent && (result == LoginResult.Timeout ||
+                    result == LoginResult.NetworkError)
+            ) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("login_vpn_hint")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(WifiDims.Space4),
+                        verticalArrangement = Arrangement.spacedBy(WifiDims.Space2)
+                    ) {
+                        Text(
+                            text = "VPN actif",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            text = VPN_MAY_AFFECT_MESSAGE,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2),
+                            modifier = Modifier.padding(top = WifiDims.Space2)
+                        ) {
+                            Button(
+                                onClick = {
+                                    viewModel.connect(state.host, state.username, password)
+                                },
+                                enabled = !state.isConnecting,
+                                modifier = Modifier.testTag("login_vpn_retry_button")
+                            ) {
+                                Text("Réessayer")
+                            }
+                        }
+                    }
+                }
             }
 
             Text(
