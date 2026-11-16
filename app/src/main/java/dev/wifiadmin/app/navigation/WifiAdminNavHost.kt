@@ -148,6 +148,7 @@ fun WifiAdminNavHost(
                     localNetworkPermissionState = localNetworkPermissionState,
                     onRequestLocalNetworkPermission = onRequestLocalNetworkPermission,
                     onOpenAppSettings = onOpenAppSettings,
+                    isVpnPresent = { container.networkMonitor.isVpnPresent() },
                 )
             }
             composable(Route.Dashboard.path) {

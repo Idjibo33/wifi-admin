@@ -460,7 +460,11 @@ class DevicesViewModel(
         )
 
         viewModelScope.launch(repository.networkDispatcher) {
-            repository.refresh().onFailure { error ->
+            repository.refresh().onSuccess {
+                // A reused read returns success without emitting a new read
+                // state: clear the loading flag here for consistency.
+                _state.value = _state.value.copy(isLoading = false)
+            }.onFailure { error ->
                 val hasSnapshot = _state.value.hasSnapshot
                 _state.value = _state.value.copy(
                     isLoading = false,

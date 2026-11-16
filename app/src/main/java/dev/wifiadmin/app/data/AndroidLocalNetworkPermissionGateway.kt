@@ -22,19 +22,41 @@ class AndroidLocalNetworkPermissionGateway(
     private val context: Context,
 ) : LocalNetworkPermissionGateway {
 
+    /**
+     * Persistance minimale : on mémorise le fait qu'une demande a déjà été
+     * faite (et refusée), pas l'état inféré « permanent ». L'état permanent
+     * est toujours recalculé depuis le système (`shouldShowRequestPermissionRationale`)
+     * et cet historique, ce qui évite de figer un refus devenu obsolète après
+     * un accord dans les paramètres. L'historique est effacé dès qu'un accord
+     * est observé.
+     */
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val persistedPreviouslyRefused = prefs.getBoolean(KEY_PREVIOUSLY_REFUSED, false)
+
     private val _state = MutableStateFlow(
-        resolveNow(rationale = false, previouslyRefused = false),
+        resolveNow(rationale = false, previouslyRefused = persistedPreviouslyRefused),
     )
     override val state: StateFlow<LocalNetworkPermissionState> = _state.asStateFlow()
 
     /** Vrai après au moins un refus (pour distinguer Required/Refused). */
-    private var previouslyRefused = false
+    private var previouslyRefused = persistedPreviouslyRefused
+
+    private fun persistPreviouslyRefused(value: Boolean) {
+        previouslyRefused = value
+        prefs.edit().putBoolean(KEY_PREVIOUSLY_REFUSED, value).commit()
+    }
 
     override fun refreshStatus(): LocalNetworkPermissionState {
         val granted = isGranted()
         val rationale = shouldShowRationale()
-        // Un rationale vrai signifie qu'un refus a déjà eu lieu.
-        if (!granted && rationale) previouslyRefused = true
+        if (granted) {
+            // Un accord (y compris depuis les paramètres) efface l'historique.
+            if (previouslyRefused) persistPreviouslyRefused(false)
+        } else if (rationale) {
+            // Un rationale vrai signifie qu'un refus a déjà eu lieu.
+            if (!previouslyRefused) persistPreviouslyRefused(true)
+        }
         val next = resolveLocalNetworkPermissionStatus(
             sdkInt = Build.VERSION.SDK_INT,
             targetSdk = context.applicationInfo.targetSdkVersion,
@@ -62,6 +84,10 @@ class AndroidLocalNetworkPermissionGateway(
         ) {
             return false
         }
+        // Le lancement ne constitue pas un refus confirmé : on persiste
+        // l'historique uniquement dans `onRequestResult`, quand le système
+        // a réellement répondu. Un dialogue interrompu ou un processus
+        // détruit ne doit pas figer l'état à « refusé ».
         _state.value = fresh.copy(isRequestInFlight = true)
         launch(ACCESS_LOCAL_NETWORK_PERMISSION)
         return true
@@ -69,16 +95,16 @@ class AndroidLocalNetworkPermissionGateway(
 
     override fun onRequestResult(granted: Boolean, rationale: Boolean) {
         if (granted) {
-            previouslyRefused = false
+            persistPreviouslyRefused(false)
         } else if (rationale) {
-            previouslyRefused = true
+            persistPreviouslyRefused(true)
         } else {
             // Refus sans rationale après une demande = refus permanent.
             if (_state.value.status == LocalNetworkPermissionStatus.Required ||
                 _state.value.status == LocalNetworkPermissionStatus.Refused ||
                 _state.value.isRequestInFlight
             ) {
-                previouslyRefused = true
+                persistPreviouslyRefused(true)
             }
         }
         val next = resolveLocalNetworkPermissionStatus(
@@ -123,4 +149,9 @@ class AndroidLocalNetworkPermissionGateway(
 
     private fun shouldShowRationale(): Boolean =
         runCatching { rationaleProvider?.invoke() ?: false }.getOrDefault(false)
+
+    companion object {
+        private const val PREFS_NAME = "wifi_admin_local_network_permission"
+        private const val KEY_PREVIOUSLY_REFUSED = "previously_refused"
+    }
 }
