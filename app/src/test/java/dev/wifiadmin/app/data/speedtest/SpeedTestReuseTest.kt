@@ -90,7 +90,7 @@ class SpeedTestReuseTest {
     }
 
     private fun smallPolicy() = SpeedTestPolicy(
-        maxDownloadBytes = 5_000_000L,
+        maxDownloadBytes = 100_000L,
         maxUploadBytes = 500_000L,
         latencyProbes = 2,
     )
@@ -152,7 +152,7 @@ class SpeedTestReuseTest {
                 }
             }
         }
-        val e = engine(SpeedTestPolicy(latencyProbes = 1, maxDownloadBytes = 5_000_000L, maxUploadBytes = 500_000L))
+        val e = engine(SpeedTestPolicy(latencyProbes = 1, maxDownloadBytes = 100_000L, maxUploadBytes = 500_000L))
         val first = async(Dispatchers.IO) { e.run { } }
         assertTrue("download doit etre en vol avant cancel", downloadSeen.await(5, TimeUnit.SECONDS))
         e.cancel()

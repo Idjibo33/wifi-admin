@@ -77,7 +77,7 @@ class LibreSpeedUploadTest {
         val captured = AtomicReference<ByteArray?>()
         server.dispatcher = capturingDispatcher(captured)
         val maxBytes = 3L * 65_536L
-        val returned = client().upload(maxBytes) { }
+        val returned = client().upload(maxBytes, 30_000L) { }
         val body = captured.get()!!
         assertEquals(maxBytes, body.size.toLong())
         assertEquals(maxBytes, returned)
@@ -95,7 +95,7 @@ class LibreSpeedUploadTest {
         val captured = AtomicReference<ByteArray?>()
         server.dispatcher = capturingDispatcher(captured)
         val maxBytes = 200_000L
-        val returned = client().upload(maxBytes) { }
+        val returned = client().upload(maxBytes, 30_000L) { }
         val body = captured.get()!!
         assertTrue("retourne doit etre <= maxBytes, etait $returned", returned <= maxBytes)
         assertEquals(
@@ -171,7 +171,7 @@ class LibreSpeedUploadTest {
         val done = CountDownLatch(1)
         val worker = Thread {
             try {
-                runBlocking { c.upload(maxBytes) { } }
+                runBlocking { c.upload(maxBytes, 30_000L) { } }
             } catch (e: Throwable) {
                 thrownRef.set(e)
             } finally {
@@ -198,7 +198,7 @@ class LibreSpeedUploadTest {
         )
         // Ressources fermées : un nouvel upload sur un client cancellé échoue immédiatement.
         try {
-            c.upload(1_000L) { }
+            c.upload(1_000L, 30_000L) { }
             fail("un nouvel upload apres cancel() doit lever CancellationException immediatement")
         } catch (e: CancellationException) {
             // Attendu.
@@ -228,8 +228,8 @@ class LibreSpeedUploadTest {
         }
         val c = client()
         val maxBytes = 2L * 65_536L
-        val first = c.upload(maxBytes) { }
-        val second = c.upload(maxBytes) { }
+        val first = c.upload(maxBytes, 30_000L) { }
+        val second = c.upload(maxBytes, 30_000L) { }
         assertEquals(first, second)
         assertEquals(2, captures.size)
         // Propriete observee (pas de recompute PRNG dans le test) : le 1er bloc capture

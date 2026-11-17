@@ -107,7 +107,7 @@ class LibreSpeedEngineTest {
             latencyProbes = 3,
         )
         val result = engine(policy).run { }
-        assertEquals(1_000_000L, result.downloadBytes)
+        assertEquals(5_000_000L, result.downloadBytes)
         assertEquals(2_000_000L, result.uploadBytes)
         // The upload streams exactly the cap, so the result is a
         // floor ("≥"), never a precise bitrate: capped is honest.

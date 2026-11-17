@@ -380,9 +380,19 @@ fun SpeedTestContent(
                             value = formatConsumption(result.downloadBytes, result.uploadBytes),
                             modifier = Modifier.testTag("speedtest_consumption"),
                         )
+                        DetailRow(
+                            label = "Durée de la mesure",
+                            value = "${result.durationMillis} ms",
+                        )
                         if (result.capped) {
                             Text(
                                 text = "Plafond atteint avant stabilisation : valeur minimale, pas débit maximal.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text(
+                                text = "Mesure stabilisée sur la fenêtre prévue.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

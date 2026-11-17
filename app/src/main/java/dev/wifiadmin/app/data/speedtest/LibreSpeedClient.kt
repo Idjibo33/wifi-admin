@@ -102,55 +102,67 @@ class LibreSpeedClient(
     }
 
     /**
-     * Streams one long `garbage.php` response sized to [maxBytes] so a
-     * fast link reaches a stabilised window instead of a 1 Mio snippet.
+     * Streams `garbage.php` responses until [maxBytes] is reached or
+     * [maxDurationMillis] expires, whichever comes first. Real bytes only.
      *
-     * Real bytes only (never a `Content-Length`): reads stop at
-     * [maxBytes] and the stream is closed there. The first [WARMUP_BYTES]
-     * are stabilisation warm-up: counted in [DownloadStats.totalBytes]
-     * (cap and consumption) but excluded from the measurement window.
-     * An empty 200 body is not a zero rate: it is [SpeedTestFailure.Incomplete].
+     * Each request asks for up to 20 MiB (`ckSize`); the loop stops
+     * reading as soon as the byte cap or the time budget is exhausted,
+     * so a slow link runs for the full duration instead of timing out
+     * and a fast link stops at the safety cap.
+     *
+     * The first [WARMUP_BYTES] are stabilisation warm-up: counted in
+     * [DownloadStats.totalBytes] (cap and consumption) but excluded
+     * from the measurement window. An empty 200 body is not a zero rate:
+     * it is [SpeedTestFailure.Incomplete].
      */
     suspend fun download(
         maxBytes: Long,
+        maxDurationMillis: Long,
         onProgress: suspend (downloadedBytes: Long) -> Unit,
     ): DownloadStats {
         requireActive()
-        val ckSize = ((maxBytes + (1L shl 20) - 1) / (1L shl 20)).toInt().coerceIn(1, 20)
-        val request = Request.Builder()
-            .url("${endpoint.baseUrl}/garbage.php?ckSize=$ckSize&r=${KotlinRandom.nextInt(1_000_000)}")
-            .header("Accept-Encoding", "identity")
-            .get()
-            .build()
-        val call = newCall(request)
         var counted = 0L
         var windowStartNanos: Long? = null
         val phaseStart = System.nanoTime()
+        val deadlineNanos = phaseStart + maxDurationMillis * 1_000_000L
         try {
-            call.execute().use { response ->
-                if (response.code != 200) {
-                    throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
-                }
-                // NOTE: source() is a blocking BufferedSource. Calling
-                // .buffer() would return the raw in-memory buffer and
-                // read 0 bytes without ever hitting the socket.
-                val source = response.body?.source()
-                    ?: throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
-                val buffer = ByteArray(65_536)
-                while (counted < maxBytes) {
-                    requireActive()
-                    val wanted = minOf(buffer.size.toLong(), maxBytes - counted).toInt()
-                    val read = source.read(buffer, 0, wanted)
-                    if (read == -1) break
-                    counted += read
-                    if (counted > WARMUP_BYTES && windowStartNanos == null) {
-                        windowStartNanos = System.nanoTime()
+            while (counted < maxBytes && System.nanoTime() < deadlineNanos) {
+                requireActive()
+                val remaining = maxBytes - counted
+                val ckSize = ((remaining + (1L shl 20) - 1) / (1L shl 20)).toInt().coerceIn(1, 20)
+                val request = Request.Builder()
+                    .url("${endpoint.baseUrl}/garbage.php?ckSize=$ckSize&r=${KotlinRandom.nextInt(1_000_000)}")
+                    .header("Accept-Encoding", "identity")
+                    .get()
+                    .build()
+                val call = newCall(request)
+                try {
+                    call.execute().use { response ->
+                        if (response.code != 200) {
+                            throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
+                        }
+                        val source = response.body?.source()
+                            ?: throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
+                        val buffer = ByteArray(65_536)
+                        while (counted < maxBytes && System.nanoTime() < deadlineNanos) {
+                            requireActive()
+                            val wanted = minOf(buffer.size.toLong(), maxBytes - counted).toInt()
+                            val read = source.read(buffer, 0, wanted)
+                            if (read == -1) break
+                            counted += read
+                            if (counted > WARMUP_BYTES && windowStartNanos == null) {
+                                windowStartNanos = System.nanoTime()
+                            }
+                            onProgress(counted)
+                        }
                     }
-                    onProgress(counted)
+                } finally {
+                    release(call)
                 }
             }
-        } finally {
-            release(call)
+        } catch (e: IOException) {
+            if (cancelled) throw CancellationException("speed test cancelled")
+            throw e
         }
         if (counted == 0L) {
             throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
@@ -167,38 +179,31 @@ class LibreSpeedClient(
     }
 
     /**
-     * Streams up to [maxBytes] of deterministic incompressible bytes
-     * and returns the count of bytes really written to the application
-     * stream. The count measures bytes accepted by the stream, not
-     * physical wire bytes (TLS records, retries and buffering are
-     * outside the counter's reach).
+     * Uploads until [maxBytes] is reached or [maxDurationMillis] expires,
+     * whichever comes first. Uses chunked transfer so the actual volume
+     * can stop at the duration boundary without a protocol mismatch.
      *
-     * The payload is pseudo-random output (seeded, reproducible in
-     * tests), never zeroes: a proxy compressing zeroes would silently
-     * shrink the wire volume and inflate the rate. Every 64 KiB block
-     * is freshly filled: no fixed block is ever repeated. The content
-     * length is exactly the cap, so no byte beyond the policy can
-     * leave the phone. Cancellation is checked every 64 KiB chunk.
+     * Returns the count of bytes really written to the application stream.
      */
     suspend fun upload(
         maxBytes: Long,
+        maxDurationMillis: Long,
         onProgress: suspend (uploadedBytes: Long) -> Unit,
     ): Long {
         requireActive()
         val written = AtomicLong(0)
         val random = Random(UPLOAD_SEED)
+        val phaseStart = System.nanoTime()
+        val deadlineNanos = phaseStart + maxDurationMillis * 1_000_000L
         val body = object : RequestBody() {
-            override fun contentLength(): Long = maxBytes
+            override fun contentLength(): Long = -1  // chunked
             override fun contentType() = "application/octet-stream".toMediaType()
 
             override fun writeTo(sink: BufferedSink) {
                 val chunk = ByteArray(65_536)
                 var remaining = maxBytes
-                while (remaining > 0) {
+                while (remaining > 0 && System.nanoTime() < deadlineNanos) {
                     if (cancelled) throw IOException("cancelled")
-                    // Fresh entropy for every block: a repeated block
-                    // would be compressible by intermediaries and
-                    // misstate the wire volume.
                     random.nextBytes(chunk)
                     val n = minOf(chunk.size.toLong(), remaining).toInt()
                     sink.write(chunk, 0, n)
@@ -222,15 +227,15 @@ class LibreSpeedClient(
                 }
             }
         } catch (e: IOException) {
-            // A cancelled call surfaces as an IOException: translate
-            // it into the cooperative cancellation here so direct
-            // callers observe one consistent contract.
             if (cancelled) throw CancellationException("speed test cancelled")
             throw e
         } finally {
             release(call)
         }
         val total = written.get()
+        if (total == 0L) {
+            throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
+        }
         onProgress(total)
         return total
     }

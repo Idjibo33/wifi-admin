@@ -114,7 +114,7 @@ class LibreSpeedEngine(
 
         // Download, measured over its own stabilised window.
         onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD))
-        val stats = client.download(policy.maxDownloadBytes) { counted ->
+        val stats = client.download(policy.maxDownloadBytes, policy.maxDurationMillis) { counted ->
             onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = counted))
         }
         val downloadBytes = stats.totalBytes
@@ -132,7 +132,7 @@ class LibreSpeedEngine(
             ),
         )
         val ulStart = System.nanoTime()
-        val uploadBytes = client.upload(policy.maxUploadBytes) { counted ->
+        val uploadBytes = client.upload(policy.maxUploadBytes, policy.maxDurationMillis) { counted ->
             onProgress(
                 SpeedTestState.Running(
                     SpeedTestPhase.UPLOAD,

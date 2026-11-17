@@ -22,8 +22,8 @@ val speedtestDebugUrl: String =
 fun positiveLongProperty(name: String, default: Long): Long =
     (findProperty(name) as? String)?.toLongOrNull()?.takeIf { it > 0 } ?: default
 
-val speedTestProductionDownloadBytes = 20L * 1024 * 1024
-val speedTestProductionUploadBytes = 10L * 1024 * 1024
+val speedTestProductionDownloadBytes = 50L * 1024 * 1024
+val speedTestProductionUploadBytes = 25L * 1024 * 1024
 val speedTestProductionDurationMillis = 30_000L
 
 val speedTestDownloadBytes = positiveLongProperty(

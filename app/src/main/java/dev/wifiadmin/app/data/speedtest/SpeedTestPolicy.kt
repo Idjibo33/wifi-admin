@@ -9,12 +9,14 @@ package dev.wifiadmin.app.data.speedtest
  * small enough to protect a prepaid data plan and large enough to measure
  * a mediocre link; on a fast link the cap is reached before the measure
  * stabilises, and the UI says so (result marked "capped", never a precise
- * Mbps).
+ * Mbps). With the time-based measurement model (Mission 17), the transfer
+ * runs for the full duration on slow links; on fast links the cap is hit
+ * first and the result is a floor measurement.
  */
 data class SpeedTestPolicy(
     val maxDurationMillis: Long = 30_000L,
-    val maxDownloadBytes: Long = 20L * 1024 * 1024,
-    val maxUploadBytes: Long = 10L * 1024 * 1024,
+    val maxDownloadBytes: Long = 50L * 1024 * 1024,
+    val maxUploadBytes: Long = 25L * 1024 * 1024,
     val latencyProbes: Int = 5,
     val connectTimeoutMillis: Long = 8_000L,
     val readTimeoutMillis: Long = 10_000L,
