@@ -5,9 +5,9 @@ Appareil : Pixel 7 Pro, Android 17 (API 37, `2B091FDH3004DG`).
 Serveur : Ubuntu, `wlp58s0` `192.168.1.174/24`, routeur `192.168.1.1`.
 Branche : `feature/mission-16-local-speedtest-validation`.
 
-**Phase A uniquement.** Aucun port LAN n'a été ouvert, aucune règle de pare-feu
-n'a été modifiée, aucun transfert Download/Upload réel n'a été lancé. La Phase B
-est bloquée jusqu'à autorisation explicite (voir §11).
+**Phase A + Phase B terminées.** Phase B exécutée le 2026-11-17 (autorisation explicite reçue).
+Rapport : `docs/MISSION_16_LOCAL_BENCHMARK_REPORT.md`.
+Résultat : succès (latence 9 ms, Download 25,3 Mbps plafonné, Upload 19,1 Mbps plafonné, 1,25 Mio applicatif). Nettoyage complet et prouvé.
 
 ---
 
