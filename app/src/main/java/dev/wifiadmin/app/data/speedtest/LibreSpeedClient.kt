@@ -127,7 +127,7 @@ class LibreSpeedClient(
         val deadlineNanos = phaseStart + maxDurationMillis * 1_000_000L
         var emptyResponses = 0
         try {
-            while (counted < maxBytes && System.nanoTime() < deadlineNanos && emptyResponses < 2) {
+            while (counted < maxBytes && System.nanoTime() < deadlineNanos && emptyResponses < 1) {
                 requireActive()
                 val remaining = maxBytes - counted
                 val ckSize = ((remaining + (1L shl 20) - 1) / (1L shl 20)).toInt().coerceIn(1, 20)

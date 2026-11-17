@@ -393,7 +393,8 @@ fun SpeedTestContent(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        } else if (SpeedTestCalculator.isTooShortToTrust(result.downloadBytes, result.durationMillis)) {
+                        } else if (SpeedTestCalculator.isTooShortToTrust(result.downloadBytes, result.downloadDurationMillis) ||
+                            SpeedTestCalculator.isTooShortToTrust(result.uploadBytes, result.uploadDurationMillis)) {
                             Text(
                                 text = "Fenêtre de mesure trop courte : résultat indicatif.",
                                 style = MaterialTheme.typography.bodySmall,

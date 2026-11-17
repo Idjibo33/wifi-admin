@@ -4,10 +4,14 @@ import dev.wifiadmin.app.data.AppClock
 import dev.wifiadmin.app.data.SystemAppClock
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 /**
@@ -115,14 +119,37 @@ class LibreSpeedEngine(
         val uploadBudgetMillis = remainingMillis / 2
 
         // Latency: median of the probes (never min, never max).
+        // A per-phase watchdog cancels the in-flight call if the
+        // latency budget is exceeded, so a blocking ping cannot
+        // consume the download/upload budgets.
         onProgress(SpeedTestState.Running(SpeedTestPhase.LATENCY))
         val probes = mutableListOf<Long>()
         val latencyStart = System.nanoTime()
         val latencyDeadlineNanos = latencyStart + latencyBudgetMillis * 1_000_000L
-        repeat(policy.latencyProbes) {
-            if (System.nanoTime() >= latencyDeadlineNanos && probes.isNotEmpty()) return@repeat
-            currentCoroutineContext().ensureActive()
-            probes.add(client.pingMillis())
+        val latencyTimedOut = AtomicBoolean(false)
+        coroutineScope {
+            val watchdog = launch {
+                delay(latencyBudgetMillis)
+                latencyTimedOut.set(true)
+                runCatching { client.cancel() }
+            }
+            try {
+                repeat(policy.latencyProbes) {
+                    if (System.nanoTime() >= latencyDeadlineNanos && probes.isNotEmpty()) return@repeat
+                    currentCoroutineContext().ensureActive()
+                    try {
+                        probes.add(client.pingMillis())
+                    } catch (e: IOException) {
+                        if (latencyTimedOut.get()) throw SpeedTestFailureException(SpeedTestFailure.Timeout)
+                        throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
+                    }
+                }
+            } finally {
+                watchdog.cancel()
+            }
+        }
+        if (probes.isEmpty()) {
+            throw SpeedTestFailureException(SpeedTestFailure.Timeout)
         }
         val latency = SpeedTestCalculator.medianLatencyMillis(probes)
         val jitter = SpeedTestCalculator.jitterMillis(probes)
@@ -173,6 +200,8 @@ class LibreSpeedEngine(
             capped = cappedDownload || cappedUpload,
             cappedDownload = cappedDownload,
             cappedUpload = cappedUpload,
+            downloadDurationMillis = stats.windowNanos / 1_000_000L,
+            uploadDurationMillis = ulMillis,
             providerLabel = providerLabel,
             networkKey = "",
             wifiLink = null,

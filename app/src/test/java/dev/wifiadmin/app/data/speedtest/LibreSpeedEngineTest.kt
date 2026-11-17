@@ -2,6 +2,7 @@ package dev.wifiadmin.app.data.speedtest
 
 import dev.wifiadmin.app.data.TestAppClock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -197,6 +198,143 @@ class LibreSpeedEngineTest {
         val result = engine(reduced).run { }
         assertEquals(1L shl 20, result.downloadBytes)
         assertEquals(256L * 1024, result.uploadBytes)
+        assertTrue(result.capped)
+    }
+
+
+    /**
+     * Mission 17 — latence : une sonde bloquante qui dépasse le budget
+     * de latence déclenche un Timeout, pas une mesure complète.
+     */
+    @Test fun `latency deadline exceeded throws timeout`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                Thread.sleep(2_000)
+                return MockResponse().setResponseCode(200).setBody("onspeedtest")
+            }
+        }
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 1_000_000,
+            maxUploadBytes = 500_000,
+            maxDurationMillis = 10_000,
+            latencyProbes = 1,
+        )
+        try {
+            engine(policy).run { }
+            throw AssertionError("expected timeout")
+        } catch (e: SpeedTestFailureException) {
+            assertEquals(SpeedTestFailure.Timeout, e.failure)
+        }
+    }
+
+
+    /**
+     * Mission 17 — réponse HTTP 200 vide (download) → Incomplete.
+     */
+    @Test fun `empty http 200 response yields incomplete`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path ?: ""
+                return if (path.contains("garbage.php")) {
+                    MockResponse().setResponseCode(200)
+                        .setHeader("Content-Type", "application/octet-stream")
+                        .setBody("")
+                } else {
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                }
+            }
+        }
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 1_000_000,
+            maxUploadBytes = 100_000,
+            maxDurationMillis = 10_000,
+            latencyProbes = 1,
+        )
+        try {
+            engine(policy).run { }
+            throw AssertionError("expected Incomplete")
+        } catch (e: SpeedTestFailureException) {
+            assertEquals(SpeedTestFailure.Incomplete, e.failure)
+        }
+    }
+
+
+    /**
+     * Mission 17 — Download terminé par expiration de fenêtre (pas de plafond).
+     * Le serveur envoie 100 000 octets puis une réponse vide : le download
+     * s'arrête et counted < maxBytes → non plafonné.
+     */
+    @Test fun `download completes by time without cap`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        var reqCount = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path ?: ""
+                return if (path.contains("garbage.php")) {
+                    reqCount++
+                    if (reqCount == 1) {
+                        MockResponse().setResponseCode(200)
+                            .setHeader("Content-Type", "application/octet-stream")
+                            .setBody(bigBody(100_000))
+                    } else {
+                        MockResponse().setResponseCode(200)
+                            .setHeader("Content-Type", "application/octet-stream")
+                            .setBody("")
+                    }
+                } else {
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                }
+            }
+        }
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 1_000_000,
+            maxUploadBytes = 100_000,
+            maxDurationMillis = 10_000,
+            latencyProbes = 1,
+        )
+        val result = engine(policy).run { }
+        assertEquals(100_000L, result.downloadBytes)
+        assertFalse(result.cappedDownload)
+        assertNotNull(result.downloadMbps)
+    }
+
+
+    /**
+     * Mission 17 — Upload plafonné, Download non plafonné.
+     */
+    @Test fun `upload capped download not capped`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        var reqCount = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path ?: ""
+                return if (path.contains("garbage.php")) {
+                    reqCount++
+                    if (reqCount == 1) {
+                        MockResponse().setResponseCode(200)
+                            .setHeader("Content-Type", "application/octet-stream")
+                            .setBody(bigBody(100))
+                    } else {
+                        MockResponse().setResponseCode(200)
+                            .setHeader("Content-Type", "application/octet-stream")
+                            .setBody("")
+                    }
+                } else {
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                }
+            }
+        }
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 1_000_000,
+            maxUploadBytes = 100,
+            maxDurationMillis = 10_000,
+            latencyProbes = 1,
+        )
+        val result = engine(policy).run { }
+        assertFalse(result.cappedDownload)
+        assertTrue(result.cappedUpload)
         assertTrue(result.capped)
     }
 }
