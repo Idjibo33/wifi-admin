@@ -21,7 +21,7 @@ class SpeedTestPresentationTest {
     @Test fun `configured banner shows provider and host without URL scheme`() {
         val text = providerBannerText(providerLabel = "LibreSpeed", targetHost = "speed.example.org")
         assertEquals(
-            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 75 Mo/test",
+            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 30 Mo/test",
             text,
         )
     }
@@ -32,7 +32,7 @@ class SpeedTestPresentationTest {
             targetHost = "https://user:pass@speed.example.org:443/app/evil?token=abc",
         )
         assertEquals(
-            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 75 Mo/test",
+            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 30 Mo/test",
             text,
         )
         assertFalse(text.contains("https://"))
@@ -46,7 +46,7 @@ class SpeedTestPresentationTest {
             targetHost = null,
         )
         assertTrue(text.contains("LibreSpeed — vers speed.example.org"))
-        assertTrue(text.contains("Consommation max. 75 Mo/test"))
+        assertTrue(text.contains("Consommation max. 30 Mo/test"))
         assertFalse(text.contains("https://"))
     }
 
@@ -118,7 +118,7 @@ class SpeedTestPresentationTest {
     // -- Budget shown to the user ------------------------------------------
 
     @Test fun `budget bytes use Ko below one Mio and Mo above`() {
-        assertEquals("50 Mo", formatBudgetBytes(50L * 1024 * 1024))
+        assertEquals("20 Mo", formatBudgetBytes(20L * 1024 * 1024))
         assertEquals("1 Mo", formatBudgetBytes(1L * 1024 * 1024))
         assertEquals("256 Ko", formatBudgetBytes(256L * 1024))
         assertEquals("1,25 Mo", formatBudgetBytes(1L * 1024 * 1024 + 256L * 1024))
@@ -144,7 +144,7 @@ class SpeedTestPresentationTest {
 
     @Test fun `production consent line keeps the historical contract`() {
         assertEquals(
-            "Plafonds : 50 Mo en téléchargement, 25 Mo en envoi, 30 s.",
+            "Plafonds : 20 Mo en téléchargement, 10 Mo en envoi, 30 s.",
             consentCapsLine(SpeedTestBudget.production),
         )
     }
@@ -163,7 +163,7 @@ class SpeedTestPresentationTest {
     @Test fun `production banner has no reduced marker`() {
         val text = providerBannerText("LibreSpeed", "speed.example.org", SpeedTestBudget.production)
         assertEquals(
-            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 75 Mo/test",
+            "Fournisseur : LibreSpeed · vers speed.example.org (HTTPS) · Consommation max. 30 Mo/test",
             text,
         )
         assertFalse(text.contains("budget réduit"))

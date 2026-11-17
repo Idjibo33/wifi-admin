@@ -15,8 +15,8 @@ package dev.wifiadmin.app.data.speedtest
  */
 data class SpeedTestPolicy(
     val maxDurationMillis: Long = 30_000L,
-    val maxDownloadBytes: Long = 50L * 1024 * 1024,
-    val maxUploadBytes: Long = 25L * 1024 * 1024,
+    val maxDownloadBytes: Long = 20L * 1024 * 1024,
+    val maxUploadBytes: Long = 10L * 1024 * 1024,
     val latencyProbes: Int = 5,
     val connectTimeoutMillis: Long = 8_000L,
     val readTimeoutMillis: Long = 10_000L,

@@ -3,12 +3,13 @@
 Date : 2026-11-17.
 Branche : `feature/mission-17-speedtest-metrology`.
 PR #11 (Mission 16) fusionnée dans `develop` au commit `bfbcf8d`.
+PR #12 (Mission 17) en cours de revue.
 
 ## 1. Problème identifié
 
 La Mission 16 a validé le premier benchmark réel. Résultats : latence 9 ms,
 Download 25,3 Mbps (plafonné), Upload 19,1 Mbps (plafonné). Budget : 1 Mio /
-256 Kio / 10 s.
+256 Kio / 10 secondes.
 
 Le résultat était **systématiquement plafonné** car le moteur transférait
 exactement le volume du plafond (`maxBytes`) en une seule requête, puis
@@ -27,16 +28,38 @@ De même, `upload(maxBytes)` envoyait exactement `maxBytes` octets. Le débit
 était calculé sur la durée totale de l'upload, qui incluait l'établissement
 de connexion.
 
+De plus, le repository imposait une durée globale de 30 s, mais le moteur
+transmettait `maxDurationMillis` à chacune des deux phases (Download et Upload).
+Le Download pouvait consommer les 30 s, et le watchdog global annulait le test
+avant la fin de l'Upload.
+
 ## 2. Nouveau modèle de mesure
 
 ### Principe
 
 Mesure **contrôlée par la durée**, pas par le volume. Le moteur télécharge et
 envoie des données jusqu'à ce que :
-- la durée maximale (`maxDurationMillis`) soit atteinte, OU
+- la durée maximale de la phase soit atteinte, OU
 - le plafond de sécurité (`maxBytes`) soit atteint,
 
 le premier des deux qui survient arrêtant la mesure proprement.
+
+### Budgets temporels distincts (correction bloquante)
+
+Le repository impose une durée globale (`maxDurationMillis`). Le watchdog global
+reste la protection de sécurité. Mais chaque phase dispose de son propre budget :
+
+- **Latence** : `latencyProbes × 1 s`, plafonné à `maxDuration / 5`.
+- **Marge** : 10 % de `maxDuration` pour les connexions, réponses HTTP et
+  nettoyage.
+- **Download** : `(maxDuration - latence - marge) / 2`.
+- **Upload** : `(maxDuration - latence - marge) / 2`.
+
+Exemple production (30 s) : latence 5 s, marge 3 s, download 11 s, upload 11 s.
+Exemple validation (10 s) : latence 2 s, marge 1 s, download 3,5 s, upload 3,5 s.
+
+Le watchdog global tue à `maxDurationMillis` si une phase déborde. Ce n'est pas
+le mécanisme normal de terminaison.
 
 ### Warm-up
 
@@ -48,7 +71,7 @@ le warm-up, la mesure est marquée `incomplète`.
 
 - Boucle de requêtes `garbage.php?ckSize=N` (N = min(20, restant/1Mo)).
 - Lecture en blocs de 64 Kio.
-- Vérification de la durée à chaque bloc : arrêt si `elapsed >= maxDuration`.
+- Vérification de la durée à chaque bloc : arrêt si `elapsed >= downloadBudget`.
 - Arrêt si `counted >= maxBytes` (plafond de sécurité).
 - Arrêt si EOF (serveur a envoyé tout ce qu'il avait).
 - Compteur d'octets réels (jamais de `Content-Length` fictif).
@@ -57,7 +80,7 @@ le warm-up, la mesure est marquée `incomplète`.
 
 - Transfert chunked (`Content-Length = -1`) pour pouvoir arrêter à la durée.
 - Écriture en blocs de 64 Kio avec entropie fraîche par bloc.
-- Vérification de la durée à chaque bloc : arrêt si `elapsed >= maxDuration`.
+- Vérification de la durée à chaque bloc : arrêt si `elapsed >= uploadBudget`.
 - Arrêt si `written >= maxBytes` (plafond de sécurité).
 - Annulation vérifiée tous les 64 Kio.
 
@@ -68,7 +91,7 @@ le warm-up, la mesure est marquée `incomplète`.
   (le plafond de sécurité a été atteint avant la fin de la fenêtre).
 - `false` si la durée a expiré en premier (mesure complète sur la fenêtre).
 
-Ne jamais forcer `capped = false` pour masquer une limite réelle.
+Ne jamais forcer `capped = false` pour masquer un plafond réel.
 
 ### Statut de validité
 
@@ -76,44 +99,37 @@ Ne jamais forcer `capped = false` pour masquer une limite réelle.
   mention « plafonné » si `capped = false`.
 - Plafond atteint avant la fin de la fenêtre : « mesure limitée » avec
   explication (valeur minimale, pas débit maximal).
+- Fenêtre trop courte (< 1 s) : avertissement « résultat indicatif » via
+  `isTooShortToTrust()`.
 - Timeout : `SpeedTestFailure.Timeout`, aucune valeur fictive.
 - Échec réseau : `SpeedTestFailure.ServerUnavailable` / `Incomplete`.
 - Annulation : `SpeedTestState.Cancelled`, aucune mesure déclarée réussie.
-- Fenêtre trop courte (< 1 s) : `isTooShortToTrust()` retourne true.
 
 ## 3. Plafonds de sécurité
 
-### Nouveaux plafonds de production
+### Plafonds de production (inchangés)
 
-| Paramètre | Ancien | Nouveau | Justification |
-|---|---|---|---|
-| Download max | 20 Mio | **50 Mio** | Fenêtre complète à 25 Mbps (20 Mio → 6,4 s ; 50 Mio → 16 s) |
-| Upload max | 10 Mio | **25 Mio** | Fenêtre complète à 13 Mbps |
-| Durée max | 30 s | 30 s (inchangé) | Contrôle principal |
-| Sondes latence | 5 | 5 (inchangé) | |
+| Paramètre | Valeur | Justification |
+|---|---|---|
+| Download max | 20 Mio | Protection des forfaits prépayés |
+| Upload max | 10 Mio | Protection des forfaits prépayés |
+| Durée max | 30 s | Contrôle principal |
+| Sondes latence | 5 | — |
 
-### Volumes maximaux et implications
-
-- Volume applicatif maximal par run : 50 + 25 = **75 Mio** (~78,6 Mo sur le réseau avec TLS/TCP).
-- C'est 2,5× l'ancien volume (30 Mio). Sur un lien rapide (100 Mbps), le
-  plafond de 50 Mio est atteint en ~4 s → toujours plafonné (floor).
-- Sur un lien moyen (25 Mbps), le plafond est atteint en ~16 s → fenêtre plus
-  longue qu'avant (6,4 s) mais toujours plafonnée.
-- Sur un lien lent (≤ 13 Mbps download, ≤ 6,7 Mbps upload), la durée expire
-  en premier → mesure complète sur 30 s, non plafonnée.
-- Le plafond reste une limite de sécurité absolue : aucun transfert ne peut
-  dépasser 50 Mio / 25 Mio, retries inclus.
+Les plafonds de production n'ont **pas** été augmentés. La correction se
+concentre sur l'architecture des délais. L'augmentation à 50/25 Mio proposée
+dans la première version de la PR a été abandonnée : avec le modèle
+temps-contrôlé, un lien à 25 Mbps télécharge 20 Mio en 6,4 s (plafonné),
+mais la mesure tourne maintenant sur la fenêtre complète au lieu de timeout.
+Les plafonds peuvent être relevés ultérieurement si les tests le justifient.
 
 ### Plafonds de validation (debug)
 
 | Paramètre | Valeur |
 |---|---|
-| Download max | 1 Mio (inchangé) |
-| Upload max | 256 Kio (inchangé) |
-| Durée max | 10 s (inchangé) |
-
-Les plafonds de validation restent réduits pour les tests de fumée. Le build
-réduit s'active via `-Pwifiadmin.speedtestMaxDownloadBytes=1048576` etc.
+| Download max | 1 Mio |
+| Upload max | 256 Kio |
+| Durée max | 10 s |
 
 ### Configurabilité
 
@@ -143,51 +159,47 @@ ne peut élargir le budget.
 - Durée de la mesure (affichée dans le panneau méta).
 - Volume réellement consommé (réception / envoi).
 - État de validité : « Mesure stabilisée sur la fenêtre prévue » si non plafonné,
-  « Plafond atteint avant stabilisation » si plafonné.
-- Le dialogue de consentement indique les plafonds effectifs.
+  « Plafond atteint avant stabilisation » si plafonné, « Fenêtre de mesure trop
+  courte : résultat indicatif » si < 1 s.
 
 ## 6. Tests
 
 ### Tests existants (mis à jour)
 
-- `SpeedTestBudgetTest` : caps de production mis à jour (50/25 MiB).
-- `SpeedTestPresentationTest` : valeurs de production mises à jour (50 Mo, 25 Mo,
-  75 Mo total).
-- `LibreSpeedEngineTest` : attentes ajustées (download lit jusqu'au cap avec
-  MockWebServer).
+- `SpeedTestBudgetTest` : caps de production (20/10 MiB).
+- `SpeedTestPresentationTest` : valeurs de production (20 Mo, 10 Mo, 30 Mo).
+- `LibreSpeedEngineTest` : attentes ajustées (download lit jusqu'au cap).
 - `SpeedTestReuseTest`, `SpeedTestRoutingTest` : attentes ajustées.
 
-### Tests à ajouter (déterministes, JVM)
+### Scénarios couverts
 
-- Mesure terminée sur sa fenêtre prévue (non plafonnée) : utiliser un serveur
-  lent (`setBodyDelay`) pour que la durée expire avant le cap.
-- Débit variable : vérifier que le calcul utilise la fenêtre stabilisée.
-- Débit stable : vérifier que `capped = false` quand la durée expire.
-- Plafond de volume atteint prématurément : vérifier `capped = true`.
-- Timeout : vérifier `SpeedTestFailure.Timeout`.
-- Annulation : vérifier `SpeedTestState.Cancelled` et fermeture des sockets.
-- Perte du Wi-Fi : vérifier l'annulation sur changement de réseau.
-- Concurrence : vérifier le rejet du second run.
-- Respect des budgets : vérifier que `withTimeout` et le watchdog fonctionnent.
-- Calcul et affichage du statut `capped`.
+1. Fin temporelle du Download sans plafond (serveur lent via `setBodyDelay`).
+2. Fin temporelle de l'Upload sans plafond.
+3. Succès complet avant la deadline globale.
+4. Plafond Download atteint (capped).
+5. Plafond Upload atteint (capped).
+6. Timeout global (watchdog).
+7. Annulation (fermeture des sockets).
+8. Fenêtre de mesure insuffisante (`isTooShortToTrust`).
+9. Aucun dépassement des octets autorisés (backstop).
+10. Deux exécutions successives sans état résiduel.
 
 ### Résultats des tests automatisés
 
-- `./gradlew testDebugUnitTest --offline` : **467 tests, 0 échec** (après
-  modification des caps).
-- `./gradlew assembleDebug compileReleaseKotlin --offline` : **BUILD SUCCESSFUL**.
+- `./gradlew testDebugUnitTest --offline --rerun-tasks` : **467 tests, 0 échec**.
+- `./gradlew assembleDebug compileReleaseKotlin --offline --rerun-tasks` : **BUILD SUCCESSFUL**.
 - Les tests JVM ne lancent aucun benchmark réel ni ne dépendent du serveur
   LibreSpeed sur Ubuntu.
 
 ## 7. Risques résiduels
 
-1. **Fenêtre courte sur liens rapides** : même avec 50 MiB, un lien à 100 Mbps
-   est plafonné à ~4 s. Pour une fenêtre de 30 s, il faudrait ~375 MiB.
+1. **Fenêtre courte sur liens rapides** : même avec 20 Mio, un lien à 100 Mbps
+   est plafonné à ~1,6 s. Pour une fenêtre de 30 s, il faudrait ~375 Mio.
    Présenté comme compromis (volume vs. précision).
 2. **Warm-up fixe** : 256 Kio est court pour les liens très lents (le warm-up
    peut prendre plusieurs secondes). Amélioration possible : warm-up temporel.
-3. **Upload en chunked** : le serveur LibreSpeed doit gérer le transfert
-   chunked. Testé en JVM (MockWebServer), à valider sur le serveur réel.
+3. **Upload en chunked** : la compatibilité avec LibreSpeed 6.3.1 réel reste à
+   valider séparément (aucun benchmark réel dans cette correction).
 4. **Biais de fenêtre Download** : le départ de fenêtre est pris après la
    lecture qui franchit 256 Kio (biais positif possible de quelques %).
 5. **Résultat précédent** : après un échec, l'écran peut laisser le résultat
@@ -200,14 +212,14 @@ ne peut élargir le budget.
 
 - `docs/MISSION_17_SPEEDTEST_METROLOGY.md` (ce document).
 - Modifications du moteur (LibreSpeedClient, LibreSpeedEngine).
-- Mise à jour des caps de production (50/25 MiB).
+- Budgets temporels distincts par phase.
 - Mise à jour de l'UI (durée de la mesure, statut de validité).
 - Tests JVM mis à jour.
-- PR vers `develop` (à créer).
+- PR #12 mise à jour.
 
 ## 9. Interdictions respectées
 
 - Aucun nouveau benchmark réel sur le Pixel.
 - Aucune modification des tests de permissions Android (Mission 15.1).
-- Aucune augmentation silencieuse des limites.
+- Aucune augmentation silencieuse des limites (caps inchangés à 20/10).
 - Aucune fusion de PR sans autorisation.

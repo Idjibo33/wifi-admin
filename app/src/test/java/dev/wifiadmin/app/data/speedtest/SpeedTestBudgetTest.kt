@@ -19,8 +19,8 @@ class SpeedTestBudgetTest {
     @Test
     fun `production caps are the reference`() {
         val policy = SpeedTestBudget.production
-        assertEquals(50L * 1024 * 1024, policy.maxDownloadBytes)
-        assertEquals(25L * 1024 * 1024, policy.maxUploadBytes)
+        assertEquals(20L * 1024 * 1024, policy.maxDownloadBytes)
+        assertEquals(10L * 1024 * 1024, policy.maxUploadBytes)
         assertEquals(30_000L, policy.maxDurationMillis)
         assertEquals(5, policy.latencyProbes)
         assertFalse(SpeedTestBudget.isReduced(policy))

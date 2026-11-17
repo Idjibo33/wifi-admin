@@ -102,6 +102,18 @@ class LibreSpeedEngine(
     ): SpeedTestResult {
         val startNanos = System.nanoTime()
 
+        // Per-phase time budgets: the global maxDurationMillis is the
+        // safety ceiling, not the budget of each phase. Latency gets a
+        // small slice, the remainder is split equally between download
+        // and upload, with a 10 % margin for connection setup and
+        // cleanup. The watchdog (repository) still kills at
+        // maxDurationMillis if a phase overruns.
+        val latencyBudgetMillis = (policy.latencyProbes * 1_000L).coerceAtMost(policy.maxDurationMillis / 5)
+        val marginMillis = policy.maxDurationMillis / 10
+        val remainingMillis = (policy.maxDurationMillis - latencyBudgetMillis - marginMillis).coerceAtLeast(1_000L)
+        val downloadBudgetMillis = remainingMillis / 2
+        val uploadBudgetMillis = remainingMillis / 2
+
         // Latency: median of the probes (never min, never max).
         onProgress(SpeedTestState.Running(SpeedTestPhase.LATENCY))
         val probes = mutableListOf<Long>()
@@ -114,7 +126,7 @@ class LibreSpeedEngine(
 
         // Download, measured over its own stabilised window.
         onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD))
-        val stats = client.download(policy.maxDownloadBytes, policy.maxDurationMillis) { counted ->
+        val stats = client.download(policy.maxDownloadBytes, downloadBudgetMillis) { counted ->
             onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = counted))
         }
         val downloadBytes = stats.totalBytes
@@ -132,7 +144,7 @@ class LibreSpeedEngine(
             ),
         )
         val ulStart = System.nanoTime()
-        val uploadBytes = client.upload(policy.maxUploadBytes, policy.maxDurationMillis) { counted ->
+        val uploadBytes = client.upload(policy.maxUploadBytes, uploadBudgetMillis) { counted ->
             onProgress(
                 SpeedTestState.Running(
                     SpeedTestPhase.UPLOAD,
