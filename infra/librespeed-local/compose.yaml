@@ -58,7 +58,12 @@ services:
     profiles: ["tls"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./tls:/certs:ro
+      # Monter uniquement la paire serveur. Monter ./tls en entier donnerait
+      # la cle privee de la CA (ca.key) au conteneur expose sur le LAN.
+      - ./tls/cert.pem:/certs/cert.pem:ro
+      - ./tls/key.pem:/certs/key.pem:ro
+    security_opt:
+      - "no-new-privileges:true"
     # Par defaut, ecoute boucle locale uniquement. Pour l'acces LAN Pixel,
     # apres autorisation explicite UNIQUEMENT, binder sur l'IP LAN concrete
     # de wlp58s0 (exemple labo ci-dessous, A CONFIRMER le jour J : l'IP
@@ -72,10 +77,9 @@ services:
       # Exemple LAN si et seulement si autorisation : decommenter en
       # remplacant 192.168.1.174 par l'IP LAN reelle du jour J :
       # - "192.168.1.174:8443:8443"
-    # Caddy force HTTPS sur 443 interne ; le port 8443 externe entraine
-    # une redirection 308 vers https://...:443. Pour la validation via
-    # https://127.0.0.1:8443, configurer Caddy en tls internal ou
-    # fournir un certificat explicite (voir Caddyfile).
+    # Caddy ecoute directement HTTPS sur :8443 dans le conteneur (voir
+    # Caddyfile) : aucun rebond 443 ni redirection 308. Le port externe
+    # 8443 correspond donc au port interne 8443 (utile pour DOCKER-USER).
     restart: "no"
     networks:
       - librespeed-local

@@ -15,6 +15,7 @@ import dev.wifiadmin.app.data.RouterRepository
 import dev.wifiadmin.app.data.SettingsStore
 import dev.wifiadmin.app.data.speedtest.AndroidWifiLinkInfoProvider
 import dev.wifiadmin.app.data.speedtest.AndroidWifiNetworkRouteProvider
+import dev.wifiadmin.app.data.speedtest.SpeedTestBudget
 import dev.wifiadmin.app.data.speedtest.SpeedTestEngineFactory
 import dev.wifiadmin.app.data.speedtest.SpeedTestPolicy
 import dev.wifiadmin.app.data.speedtest.SpeedTestPreferencesStore
@@ -137,11 +138,26 @@ class AppContainer(application: Application) {
         connectivity = application.getSystemService(ConnectivityManager::class.java)!!
     )
 
+    /**
+     * The one transfer budget shared by the engine and the repository.
+     *
+     * Debug builds may lower the caps through Gradle properties; release
+     * builds always keep [SpeedTestBudget.production]. Using a single
+     * instance is required: the engine stops the bytes, the repository
+     * enforces the duration and the backstop.
+     */
+    val speedTestPolicy: SpeedTestPolicy = SpeedTestBudget.fromCaps(
+        maxDownloadBytes = BuildConfig.SPEEDTEST_MAX_DOWNLOAD_BYTES,
+        maxUploadBytes = BuildConfig.SPEEDTEST_MAX_UPLOAD_BYTES,
+        maxDurationMillis = BuildConfig.SPEEDTEST_MAX_DURATION_MILLIS,
+    )
+
     /** The Internet speed test engine: disabled until an endpoint is configured.
      * Runs are bound to the selected Wi-Fi network (sockets + DNS). */
     val speedTestEngine: dev.wifiadmin.app.data.speedtest.SpeedTestEngine =
         SpeedTestEngineFactory.create(
             BuildConfig.SPEEDTEST_BASE_URL,
+            policy = speedTestPolicy,
             routeProvider = AndroidWifiNetworkRouteProvider(
                 connectivity = application.getSystemService(ConnectivityManager::class.java)!!,
                 monitor = networkMonitor,
@@ -156,7 +172,7 @@ class AppContainer(application: Application) {
         linkProvider = wifiLinkInfoProvider,
         clock = clock,
         scope = applicationScope,
-        policy = SpeedTestPolicy(),
+        policy = speedTestPolicy,
         localNetworkPermissionGateway = localNetworkPermissionGateway,
     )
 

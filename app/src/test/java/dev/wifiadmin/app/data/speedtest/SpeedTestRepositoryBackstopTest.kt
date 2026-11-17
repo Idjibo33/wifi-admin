@@ -5,13 +5,17 @@ import dev.wifiadmin.app.data.NetworkIdentity
 import dev.wifiadmin.app.data.NetworkMonitor
 import dev.wifiadmin.app.data.TestAppClock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -102,5 +106,90 @@ class SpeedTestRepositoryBackstopTest {
         val state = repository.state.value
         assertTrue("STATE=$state", state is SpeedTestState.Failed)
         assertEquals(SpeedTestFailure.Incomplete, (state as SpeedTestState.Failed).reason)
+    }
+
+    /**
+     * Mission 16 — the reduced budget is the one the repository enforces.
+     * 1.5 Mio is under the production cap (20 Mio) but over the reduced
+     * cap (1 Mio): it must be refused. This proves the repository applies
+     * the reduced policy; the shared instance is wired in
+     * `WifiAdminApplication`.
+     */
+    @Test fun `a reduced budget also bounds the repository backstop`() = runTest {
+        val reduced = SpeedTestBudget.fromCaps(
+            maxDownloadBytes = 1L shl 20,
+            maxUploadBytes = 256L * 1024,
+            maxDurationMillis = 10_000L,
+        )
+        val engine = object : SpeedTestEngine {
+            override val providerLabel = "reduced-overcap"
+            override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
+                onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = 1_500_000L))
+                return SpeedTestResult(
+                    1.0, 1.0, 1L, 1_500_000L, 0L, 1_000, false,
+                    "reduced-overcap", "k", null, 1L,
+                )
+            }
+            override fun cancel() = Unit
+        }
+        val repository = SpeedTestRepository(
+            engine = engine,
+            monitor = FakeMonitor(wifi),
+            clock = TestAppClock(),
+            scope = this,
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            policy = reduced,
+        )
+        repository.start()
+        runCurrent()
+        val state = repository.state.value
+        assertTrue("STATE=$state", state is SpeedTestState.Failed)
+        assertEquals(SpeedTestFailure.Incomplete, (state as SpeedTestState.Failed).reason)
+        // The UI reads these caps: they must be the reduced ones, not production.
+        assertEquals(1L shl 20, repository.caps.maxDownloadBytes)
+        assertEquals(256L * 1024, repository.caps.maxUploadBytes)
+        assertEquals(10_000L, repository.caps.maxDurationMillis)
+        assertFalse(repository.isRunning)
+    }
+
+    /**
+     * Mission 16 — the duration cap is enforced on the wire, not only on
+     * the coroutine. The fake engine blocks in a non-cooperative call
+     * (like a blocking OkHttp read): without the watchdog, `withTimeout`
+     * could not preempt it. The watchdog must call `cancel()`, which
+     * releases the blocked call, and the run must be reported as a
+     * timeout rather than a cancellation.
+     */
+    @Test fun `deadline cancels a blocking engine and reports a timeout`() = runBlocking {
+        val released = java.util.concurrent.CountDownLatch(1)
+        val engine = object : SpeedTestEngine {
+            override val providerLabel = "blocking"
+            override suspend fun run(
+                onProgress: suspend (SpeedTestState.Running) -> Unit,
+            ): SpeedTestResult {
+                // Ignores coroutine cancellation: only cancel() unblocks it.
+                released.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                throw CancellationException("released by cancel")
+            }
+            override fun cancel() {
+                released.countDown()
+            }
+        }
+        val repository = SpeedTestRepository(
+            engine = engine,
+            monitor = FakeMonitor(wifi),
+            clock = TestAppClock(),
+            scope = this,
+            ioDispatcher = Dispatchers.IO,
+            policy = SpeedTestPolicy(maxDurationMillis = 300L),
+        )
+        val startedAt = System.nanoTime()
+        repository.start()
+        val state = withTimeout(5_000L) {
+            repository.state.first { it is SpeedTestState.Failed }
+        }
+        val elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000L
+        assertEquals(SpeedTestFailure.Timeout, (state as SpeedTestState.Failed).reason)
+        assertTrue("deadline must cut the run: ${elapsedMillis}ms", elapsedMillis < 3_000L)
     }
 }

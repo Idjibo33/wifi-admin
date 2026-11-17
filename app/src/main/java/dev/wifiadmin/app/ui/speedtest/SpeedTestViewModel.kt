@@ -7,6 +7,7 @@ import dev.wifiadmin.app.data.NetworkMonitor
 import dev.wifiadmin.app.data.speedtest.CancelReason
 import dev.wifiadmin.app.data.speedtest.SpeedTestFailure
 import dev.wifiadmin.app.data.speedtest.SpeedTestPhase
+import dev.wifiadmin.app.data.speedtest.SpeedTestPolicy
 import dev.wifiadmin.app.data.speedtest.SpeedTestPreferencesStore
 import dev.wifiadmin.app.data.speedtest.SpeedTestRepository
 import dev.wifiadmin.app.data.speedtest.SpeedTestResult
@@ -41,6 +42,8 @@ data class SpeedTestUiState(
     val previousResult: SpeedTestResult? = null,
     val providerLabel: String? = null,
     val targetHost: String? = null,
+    /** Effective caps, so consent and banner never overstate/understate them. */
+    val caps: SpeedTestPolicy? = null,
 ) {
     val isDisabled: Boolean get() = failure is SpeedTestFailure.Disabled
 }
@@ -67,6 +70,7 @@ class SpeedTestViewModel(
             failure = if (initiallyDisabled) SpeedTestFailure.Disabled else null,
             providerLabel = providerLabel,
             targetHost = sanitizeHostLabel(targetHost) ?: extractTargetHost(providerLabel),
+            caps = repository.caps,
         )
     )
     val state: StateFlow<SpeedTestUiState> = _state.asStateFlow()

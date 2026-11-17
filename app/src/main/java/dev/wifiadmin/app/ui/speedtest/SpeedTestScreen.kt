@@ -55,6 +55,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.data.speedtest.SpeedTestBudget
 import dev.wifiadmin.app.data.speedtest.SpeedTestFailure
 import dev.wifiadmin.app.data.speedtest.SpeedTestResult
 import dev.wifiadmin.app.data.speedtest.SpeedTestCalculator
@@ -200,7 +201,11 @@ fun SpeedTestContent(
                 ) {
                     Column(modifier = Modifier.padding(WifiDims.Space4)) {
                         Text(
-                            text = providerBannerText(state.providerLabel, state.targetHost),
+                            text = providerBannerText(
+                                state.providerLabel,
+                                state.targetHost,
+                                state.caps ?: SpeedTestBudget.production,
+                            ),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             modifier = Modifier.testTag("speedtest_provider_banner"),
@@ -458,7 +463,13 @@ fun SpeedTestContent(
                     } else {
                         Text("Données : seuls le débit mesuré, la latence et l'heure seraient conservés localement ; l'adresse IP publique du Wi-Fi reste visible du serveur pendant la mesure.")
                     }
-                    Text("Consommation : le test télécharge et envoie des données réelles ; évitez un forfait mobile limité. Plafonds : 20 Mo en téléchargement, 10 Mo en envoi, 30 s.")
+                    Text(
+                        "Consommation : le test télécharge et envoie des données réelles ; " +
+                            "évitez un forfait mobile limité. " +
+                            consentCapsLine(
+                                state.caps ?: SpeedTestBudget.production,
+                            ),
+                    )
                 }
             },
             confirmButton = {

@@ -151,7 +151,11 @@ class LibreSpeedEngineTest {
                     downloadSeen.countDown()
                     MockResponse().setResponseCode(200)
                         .setBody(bigBody(10_000_000))
-                        .setBodyDelay(5, TimeUnit.SECONDS)
+                        // Short enough for MockWebServer.shutdown() to
+                        // drain its queue within its own 5 s budget, long
+                        // enough that missing cancellation is observable
+                        // via the elapsed-time assertion below.
+                        .setBodyDelay(2, TimeUnit.SECONDS)
                 } else {
                     MockResponse().setResponseCode(200).setBody("onspeedtest")
                 }
@@ -160,13 +164,39 @@ class LibreSpeedEngineTest {
         val e = engine(SpeedTestPolicy(latencyProbes = 1))
         val job = async(kotlinx.coroutines.Dispatchers.IO) { e.run { } }
         assertTrue("download doit etre en vol avant cancel", downloadSeen.await(5, TimeUnit.SECONDS))
+        val cancelAt = System.nanoTime()
         e.cancel()
         try {
             job.await()
             throw AssertionError("expected cancellation")
         } catch (ce: CancellationException) {
-            assertTrue(ce is CancellationException)
+            // Proves the socket was closed: a cooperative-only cancel
+            // would have waited for the 2 s body delay.
+            val elapsedMillis = (System.nanoTime() - cancelAt) / 1_000_000L
+            assertTrue(
+                "cancel doit fermer l'appel sans attendre le corps: ${elapsedMillis}ms",
+                elapsedMillis < 1_500L,
+            )
         }
         job.cancel()
+    }
+
+    /**
+     * Mission 16 — the reduced debug preset is enforced by the engine
+     * itself, not only by the repository: exactly the cap leaves the
+     * phone, and the result is honestly marked capped.
+     */
+    @Test fun `reduced debug budget stops at the exact caps`() = runBlocking {
+        server.start()
+        route(2_000_000)
+        val reduced = SpeedTestBudget.fromCaps(
+            maxDownloadBytes = 1L shl 20,
+            maxUploadBytes = 256L * 1024,
+            maxDurationMillis = 10_000L,
+        ).copy(latencyProbes = 1)
+        val result = engine(reduced).run { }
+        assertEquals(1L shl 20, result.downloadBytes)
+        assertEquals(256L * 1024, result.uploadBytes)
+        assertTrue(result.capped)
     }
 }
