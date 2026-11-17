@@ -15,7 +15,11 @@ data class SpeedTestResult(
     val downloadBytes: Long,
     val uploadBytes: Long,
     val durationMillis: Long,
-    val capped: Boolean,
+    val capped: Boolean = false,
+    /** True when the download hit the byte cap before its time window expired. */
+    val cappedDownload: Boolean = capped,
+    /** True when the upload hit the byte cap before its time window expired. */
+    val cappedUpload: Boolean = capped,
     val providerLabel: String,
     val networkKey: String,
     val wifiLink: WifiLinkInfo?,

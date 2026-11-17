@@ -37,6 +37,8 @@ object SpeedTestHistoryCodec {
                 put("ulBytes", r.uploadBytes)
                 put("durationMs", r.durationMillis)
                 put("capped", r.capped)
+                put("cappedDl", r.cappedDownload)
+                put("cappedUl", r.cappedUpload)
                 put("provider", r.providerLabel)
                 put("network", r.networkKey)
                 put("at", r.capturedAtWallMillis)
@@ -64,6 +66,8 @@ object SpeedTestHistoryCodec {
                 uploadBytes = o.optLong("ulBytes", 0),
                 durationMillis = o.optLong("durationMs", 0),
                 capped = o.optBoolean("capped", false),
+                cappedDownload = o.optBoolean("cappedDl", o.optBoolean("capped", false)),
+                cappedUpload = o.optBoolean("cappedUl", o.optBoolean("capped", false)),
                 providerLabel = o.optString("provider", "Inconnu"),
                 networkKey = o.optString("network", ""),
                 wifiLink = null,

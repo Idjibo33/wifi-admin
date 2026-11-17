@@ -117,7 +117,10 @@ class LibreSpeedEngine(
         // Latency: median of the probes (never min, never max).
         onProgress(SpeedTestState.Running(SpeedTestPhase.LATENCY))
         val probes = mutableListOf<Long>()
+        val latencyStart = System.nanoTime()
+        val latencyDeadlineNanos = latencyStart + latencyBudgetMillis * 1_000_000L
         repeat(policy.latencyProbes) {
+            if (System.nanoTime() >= latencyDeadlineNanos && probes.isNotEmpty()) return@repeat
             currentCoroutineContext().ensureActive()
             probes.add(client.pingMillis())
         }
@@ -158,6 +161,8 @@ class LibreSpeedEngine(
         val uploadMbps = SpeedTestCalculator.mbps(uploadBytes, ulMillis)
 
         val durationMillis = maxOf(1L, (System.nanoTime() - startNanos) / 1_000_000L)
+        val cappedDownload = downloadBytes >= policy.maxDownloadBytes
+        val cappedUpload = uploadBytes >= policy.maxUploadBytes
         return SpeedTestResult(
             downloadMbps = downloadMbps,
             uploadMbps = uploadMbps,
@@ -165,7 +170,9 @@ class LibreSpeedEngine(
             downloadBytes = downloadBytes,
             uploadBytes = uploadBytes,
             durationMillis = durationMillis,
-            capped = SpeedTestCalculator.isCapped(downloadBytes, uploadBytes, policy),
+            capped = cappedDownload || cappedUpload,
+            cappedDownload = cappedDownload,
+            cappedUpload = cappedUpload,
             providerLabel = providerLabel,
             networkKey = "",
             wifiLink = null,

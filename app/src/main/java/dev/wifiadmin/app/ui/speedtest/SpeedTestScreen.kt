@@ -328,14 +328,14 @@ fun SpeedTestContent(
             Row(horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
                 StatCard(
                     label = "Download (Internet)",
-                    value = formatMbpsCapped(result?.downloadMbps, result?.capped == true),
+                    value = formatMbpsCapped(result?.downloadMbps, result?.cappedDownload == true),
                     icon = Icons.Default.Download,
                     modifier = Modifier.weight(1f),
                     accent = true,
                 )
                 StatCard(
                     label = "Upload (Internet)",
-                    value = formatMbpsCapped(result?.uploadMbps, result?.capped == true),
+                    value = formatMbpsCapped(result?.uploadMbps, result?.cappedUpload == true),
                     icon = Icons.Default.Upload,
                     modifier = Modifier.weight(1f),
                 )
@@ -384,9 +384,12 @@ fun SpeedTestContent(
                             label = "Durée de la mesure",
                             value = "${result.durationMillis} ms",
                         )
-                        if (result.capped) {
+                        if (result.cappedDownload || result.cappedUpload) {
+                            val parts = mutableListOf<String>()
+                            if (result.cappedDownload) parts.add("Download")
+                            if (result.cappedUpload) parts.add("Upload")
                             Text(
-                                text = "Plafond atteint avant stabilisation : valeur minimale, pas débit maximal.",
+                                text = "${parts.joinToString(" et ")} : plafond atteint avant stabilisation, valeur minimale.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -505,7 +508,7 @@ fun SpeedTestContent(
 private fun gaugeRateText(state: SpeedTestUiState): String {
     val result = state.result ?: state.previousResult
     val value = state.currentMbps ?: result?.downloadMbps
-    val capped = result?.capped == true
+    val capped = result?.cappedDownload == true
     val base = formatMbps(value)
     return if (capped && value != null) "≥ $base Mbit/s (plafonné)" else "$base Mbit/s"
 }

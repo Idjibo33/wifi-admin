@@ -125,8 +125,9 @@ class LibreSpeedClient(
         var windowStartNanos: Long? = null
         val phaseStart = System.nanoTime()
         val deadlineNanos = phaseStart + maxDurationMillis * 1_000_000L
+        var emptyResponses = 0
         try {
-            while (counted < maxBytes && System.nanoTime() < deadlineNanos) {
+            while (counted < maxBytes && System.nanoTime() < deadlineNanos && emptyResponses < 2) {
                 requireActive()
                 val remaining = maxBytes - counted
                 val ckSize = ((remaining + (1L shl 20) - 1) / (1L shl 20)).toInt().coerceIn(1, 20)
@@ -144,17 +145,20 @@ class LibreSpeedClient(
                         val source = response.body?.source()
                             ?: throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
                         val buffer = ByteArray(65_536)
+                        var requestBytes = 0L
                         while (counted < maxBytes && System.nanoTime() < deadlineNanos) {
                             requireActive()
                             val wanted = minOf(buffer.size.toLong(), maxBytes - counted).toInt()
                             val read = source.read(buffer, 0, wanted)
                             if (read == -1) break
                             counted += read
+                            requestBytes += read
                             if (counted > WARMUP_BYTES && windowStartNanos == null) {
                                 windowStartNanos = System.nanoTime()
                             }
                             onProgress(counted)
                         }
+                        if (requestBytes == 0L) emptyResponses++ else emptyResponses = 0
                     }
                 } finally {
                     release(call)
