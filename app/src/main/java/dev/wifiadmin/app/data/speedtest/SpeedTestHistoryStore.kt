@@ -36,7 +36,13 @@ object SpeedTestHistoryCodec {
                 put("dlBytes", r.downloadBytes)
                 put("ulBytes", r.uploadBytes)
                 put("durationMs", r.durationMillis)
+                put("dlDurationMs", r.downloadDurationMillis)
+                put("ulDurationMs", r.uploadDurationMillis)
                 put("capped", r.capped)
+                put("cappedDl", r.cappedDownload)
+                put("cappedUl", r.cappedUpload)
+                put("dlEnd", r.downloadEndReason.name)
+                put("ulEnd", r.uploadEndReason.name)
                 put("provider", r.providerLabel)
                 put("network", r.networkKey)
                 put("at", r.capturedAtWallMillis)
@@ -63,7 +69,17 @@ object SpeedTestHistoryCodec {
                 downloadBytes = o.optLong("dlBytes", 0),
                 uploadBytes = o.optLong("ulBytes", 0),
                 durationMillis = o.optLong("durationMs", 0),
+                downloadDurationMillis = o.optLong("dlDurationMs", o.optLong("durationMs", 0)),
+                uploadDurationMillis = o.optLong("ulDurationMs", o.optLong("durationMs", 0)),
                 capped = o.optBoolean("capped", false),
+                cappedDownload = o.optBoolean("cappedDl", o.optBoolean("capped", false)),
+                cappedUpload = o.optBoolean("cappedUl", o.optBoolean("capped", false)),
+                // An entry saved before this classification existed must
+                // never be claimed as stabilised.
+                downloadEndReason = o.optString("dlEnd", PhaseEndReason.UNKNOWN.name)
+                    .let { runCatching { PhaseEndReason.valueOf(it) }.getOrDefault(PhaseEndReason.UNKNOWN) },
+                uploadEndReason = o.optString("ulEnd", PhaseEndReason.UNKNOWN.name)
+                    .let { runCatching { PhaseEndReason.valueOf(it) }.getOrDefault(PhaseEndReason.UNKNOWN) },
                 providerLabel = o.optString("provider", "Inconnu"),
                 networkKey = o.optString("network", ""),
                 wifiLink = null,

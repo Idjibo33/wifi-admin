@@ -55,6 +55,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.data.speedtest.PhaseEndReason
 import dev.wifiadmin.app.data.speedtest.SpeedTestBudget
 import dev.wifiadmin.app.data.speedtest.SpeedTestFailure
 import dev.wifiadmin.app.data.speedtest.SpeedTestResult
@@ -328,14 +329,14 @@ fun SpeedTestContent(
             Row(horizontalArrangement = Arrangement.spacedBy(WifiDims.Space2)) {
                 StatCard(
                     label = "Download (Internet)",
-                    value = formatMbpsCapped(result?.downloadMbps, result?.capped == true),
+                    value = formatMbpsCapped(result?.downloadMbps, result?.cappedDownload == true),
                     icon = Icons.Default.Download,
                     modifier = Modifier.weight(1f),
                     accent = true,
                 )
                 StatCard(
                     label = "Upload (Internet)",
-                    value = formatMbpsCapped(result?.uploadMbps, result?.capped == true),
+                    value = formatMbpsCapped(result?.uploadMbps, result?.cappedUpload == true),
                     icon = Icons.Default.Upload,
                     modifier = Modifier.weight(1f),
                 )
@@ -380,9 +381,42 @@ fun SpeedTestContent(
                             value = formatConsumption(result.downloadBytes, result.uploadBytes),
                             modifier = Modifier.testTag("speedtest_consumption"),
                         )
-                        if (result.capped) {
+                        DetailRow(
+                            label = "Durée de la mesure",
+                            value = "${result.durationMillis} ms",
+                        )
+                        if (result.downloadEndReason == PhaseEndReason.PREMATURE ||
+                            result.uploadEndReason == PhaseEndReason.PREMATURE) {
                             Text(
-                                text = "Plafond atteint avant stabilisation : valeur minimale, pas débit maximal.",
+                                text = "Arrêt prématuré du serveur : résultat indicatif.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (result.cappedDownload || result.cappedUpload) {
+                            val parts = mutableListOf<String>()
+                            if (result.cappedDownload) parts.add("Download")
+                            if (result.cappedUpload) parts.add("Upload")
+                            Text(
+                                text = "${parts.joinToString(" et ")} : plafond atteint avant stabilisation, valeur minimale.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (SpeedTestCalculator.isTooShortToTrust(result.downloadBytes, result.downloadDurationMillis) ||
+                            SpeedTestCalculator.isTooShortToTrust(result.uploadBytes, result.uploadDurationMillis)) {
+                            Text(
+                                text = "Fenêtre de mesure trop courte : résultat indicatif.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (SpeedTestCalculator.isStabilised(result)) {
+                            Text(
+                                text = "Mesure stabilisée sur la fenêtre prévue.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text(
+                                text = "Fin de mesure non qualifiée : résultat indicatif.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -489,7 +523,7 @@ fun SpeedTestContent(
 private fun gaugeRateText(state: SpeedTestUiState): String {
     val result = state.result ?: state.previousResult
     val value = state.currentMbps ?: result?.downloadMbps
-    val capped = result?.capped == true
+    val capped = result?.cappedDownload == true
     val base = formatMbps(value)
     return if (capped && value != null) "≥ $base Mbit/s (plafonné)" else "$base Mbit/s"
 }
