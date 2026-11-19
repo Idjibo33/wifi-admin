@@ -24,6 +24,10 @@ data class SpeedTestResult(
     val downloadDurationMillis: Long = durationMillis,
     /** Measured window of the upload phase, in ms. */
     val uploadDurationMillis: Long = durationMillis,
+    /** Why the download phase stopped. UNKNOWN for legacy stored results. */
+    val downloadEndReason: PhaseEndReason = PhaseEndReason.UNKNOWN,
+    /** Why the upload phase stopped. UNKNOWN for legacy stored results. */
+    val uploadEndReason: PhaseEndReason = PhaseEndReason.UNKNOWN,
     val providerLabel: String,
     val networkKey: String,
     val wifiLink: WifiLinkInfo?,
@@ -32,6 +36,28 @@ data class SpeedTestResult(
      * fewer than two probes succeeded or before this field existed. */
     val jitterMillis: Double? = null,
 )
+
+/**
+ * Why a measurement phase stopped. Recorded explicitly so that a premature
+ * stop is never reported as a stabilised measurement.
+ *
+ * TIMEOUT and CANCELLED abort the run (no [SpeedTestResult] is published);
+ * they are listed here so every termination path has one vocabulary.
+ */
+enum class PhaseEndReason {
+    /** The phase time window expired normally: a full, stable window. */
+    TIME_WINDOW,
+    /** The volume safety cap was reached before the window expired. */
+    VOLUME_CAP,
+    /** The server sent an empty body or ended a body early. */
+    PREMATURE,
+    /** Deadline / global watchdog aborted the phase. */
+    TIMEOUT,
+    /** User or system cancelled the run. */
+    CANCELLED,
+    /** Stored before this classification existed: never claim stabilised. */
+    UNKNOWN,
+}
 
 /** The state of a run, observed by the ViewModel. */
 sealed interface SpeedTestState {

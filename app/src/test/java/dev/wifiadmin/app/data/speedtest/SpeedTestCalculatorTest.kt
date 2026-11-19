@@ -74,4 +74,51 @@ class SpeedTestCalculatorTest {
         assertThrows(IllegalArgumentException::class.java) { SpeedTestPolicy(maxDurationMillis = 0) }
         assertThrows(IllegalArgumentException::class.java) { SpeedTestPolicy(maxDownloadBytes = 0) }
     }
+
+    private fun result(
+        downloadEnd: PhaseEndReason,
+        uploadEnd: PhaseEndReason,
+        cappedDownload: Boolean = false,
+        cappedUpload: Boolean = false,
+        downloadBytes: Long = 2_000_000,
+        uploadBytes: Long = 1_000_000,
+        downloadDurationMillis: Long = 2_000,
+        uploadDurationMillis: Long = 2_000,
+    ) = SpeedTestResult(
+        downloadMbps = 10.0,
+        uploadMbps = 5.0,
+        latencyMillis = 20L,
+        downloadBytes = downloadBytes,
+        uploadBytes = uploadBytes,
+        durationMillis = 6_000,
+        capped = cappedDownload || cappedUpload,
+        cappedDownload = cappedDownload,
+        cappedUpload = cappedUpload,
+        downloadEndReason = downloadEnd,
+        uploadEndReason = uploadEnd,
+        downloadDurationMillis = downloadDurationMillis,
+        uploadDurationMillis = uploadDurationMillis,
+        providerLabel = "test",
+        networkKey = "",
+        wifiLink = null,
+        capturedAtWallMillis = 0L,
+    )
+
+    @Test fun `both time windows are stabilised`() {
+        assertTrue(SpeedTestCalculator.isStabilised(result(PhaseEndReason.TIME_WINDOW, PhaseEndReason.TIME_WINDOW)))
+    }
+
+    @Test fun `premature phase is never stabilised`() {
+        assertFalse(SpeedTestCalculator.isStabilised(result(PhaseEndReason.PREMATURE, PhaseEndReason.TIME_WINDOW)))
+        assertFalse(SpeedTestCalculator.isStabilised(result(PhaseEndReason.TIME_WINDOW, PhaseEndReason.PREMATURE)))
+    }
+
+    @Test fun `capped or unknown or short phase is never stabilised`() {
+        assertFalse(SpeedTestCalculator.isStabilised(
+            result(PhaseEndReason.VOLUME_CAP, PhaseEndReason.TIME_WINDOW)))
+        assertFalse(SpeedTestCalculator.isStabilised(
+            result(PhaseEndReason.UNKNOWN, PhaseEndReason.TIME_WINDOW)))
+        assertFalse(SpeedTestCalculator.isStabilised(
+            result(PhaseEndReason.TIME_WINDOW, PhaseEndReason.TIME_WINDOW, downloadDurationMillis = 500)))
+    }
 }

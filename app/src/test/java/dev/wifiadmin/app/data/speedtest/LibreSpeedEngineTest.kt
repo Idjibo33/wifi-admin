@@ -11,6 +11,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
+import okio.buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,20 +30,41 @@ class LibreSpeedEngineTest {
 
     @After fun tearDown() { server.shutdown() }
 
-    private fun httpClient(): OkHttpClient = OkHttpClient.Builder()
+    private fun httpClient(paceUpload: Boolean = false): OkHttpClient = OkHttpClient.Builder()
         .callTimeout(30, TimeUnit.SECONDS)
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
+        .apply {
+            if (paceUpload) {
+                // Test-only throttle: borne le débit d'écriture indépendamment
+                // de la vitesse de la machine (le CI écrit ~385 Mio/s sinon).
+                addInterceptor { chain ->
+                    val request = chain.request()
+                    if (request.method != "POST") return@addInterceptor chain.proceed(request)
+                    val original = request.body!!
+                    val paced = object : okhttp3.RequestBody() {
+                        override fun contentType() = original.contentType()
+                        override fun contentLength(): Long = -1L
+                        override fun writeTo(sink: okio.BufferedSink) {
+                            val paced = PacedSink(sink).buffer()
+                            original.writeTo(paced)
+                            paced.flush()
+                        }
+                    }
+                    chain.proceed(request.newBuilder().post(paced).build())
+                }
+            }
+        }
         .build()
 
-    private fun engine(policy: SpeedTestPolicy = SpeedTestPolicy()): LibreSpeedEngine {
+    private fun engine(policy: SpeedTestPolicy = SpeedTestPolicy(), paceUpload: Boolean = false): LibreSpeedEngine {
         val endpoint = SpeedTestEndpointValidator.parse(server.url("/").toString())!!
         return LibreSpeedEngine(
             endpoint = endpoint,
-            baseHttpClient = httpClient(),
+            baseHttpClient = httpClient(paceUpload),
             policy = policy,
             clock = TestAppClock(),
         )
@@ -78,6 +100,18 @@ class LibreSpeedEngineTest {
                 return response
             }
         }
+    }
+
+    /** Test-only sink that sleeps 1 ms per flushed chunk: bounds upload rate. */
+    private class PacedSink(private val delegate: okio.Sink) : okio.Sink {
+        override fun write(source: Buffer, byteCount: Long) {
+            Thread.sleep(1)
+            delegate.write(source, byteCount)
+        }
+
+        override fun flush() = delegate.flush()
+        override fun close() = delegate.close()
+        override fun timeout(): okio.Timeout = delegate.timeout()
     }
 
     private fun bigBody(bytes: Long): Buffer {
@@ -262,11 +296,12 @@ class LibreSpeedEngineTest {
 
 
     /**
-     * Mission 17 — Download terminé par expiration de fenêtre (pas de plafond).
-     * Le serveur envoie 100 000 octets puis une réponse vide : le download
-     * s'arrête et counted < maxBytes → non plafonné.
+     * Mission 17 — arrêt prématuré après téléchargement partiel.
+     * Le serveur envoie 100 000 octets puis une réponse vide : la fenêtre
+     * n'a PAS expiré et le plafond n'a PAS été atteint. L'arrêt doit être
+     * classifié PREMATURE, jamais annoncé comme mesure stabilisée.
      */
-    @Test fun `download completes by time without cap`() = runBlocking(Dispatchers.IO) {
+    @Test fun `partial download then empty response is premature`() = runBlocking(Dispatchers.IO) {
         server.start()
         var reqCount = 0
         server.dispatcher = object : Dispatcher() {
@@ -297,6 +332,8 @@ class LibreSpeedEngineTest {
         val result = engine(policy).run { }
         assertEquals(100_000L, result.downloadBytes)
         assertFalse(result.cappedDownload)
+        assertEquals(PhaseEndReason.PREMATURE, result.downloadEndReason)
+        assertFalse(SpeedTestCalculator.isStabilised(result))
         assertNotNull(result.downloadMbps)
     }
 
@@ -336,5 +373,113 @@ class LibreSpeedEngineTest {
         assertFalse(result.cappedDownload)
         assertTrue(result.cappedUpload)
         assertTrue(result.capped)
+    }
+
+
+    /**
+     * Mission 17 — (1) le Download se termine par expiration de sa fenêtre,
+     * sans atteindre le plafond. Le serveur débite lentement mais ne renvoie
+     * jamais de réponse vide : seule la deadline peut arrêter la phase.
+     */
+    @Test fun `download ends by time window without cap`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path ?: ""
+                return if (path.contains("garbage.php")) {
+                    MockResponse().setResponseCode(200)
+                        .setHeader("Content-Type", "application/octet-stream")
+                        .setBody(bigBody(2_000_000))
+                        .throttleBody(64L * 1_024, 100, TimeUnit.MILLISECONDS)
+                } else {
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                }
+            }
+        }
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 3_000_000,
+            maxUploadBytes = 100_000,
+            maxDurationMillis = 6_000,
+            latencyProbes = 1,
+        )
+        val result = engine(policy).run { }
+        assertEquals(PhaseEndReason.TIME_WINDOW, result.downloadEndReason)
+        assertFalse(result.cappedDownload)
+        assertTrue(result.downloadBytes > 256L * 1_024)
+        assertTrue(result.downloadBytes < 3_000_000L)
+        assertFalse(SpeedTestCalculator.isTooShortToTrust(result.downloadBytes, result.downloadDurationMillis))
+        assertNotNull(result.downloadMbps)
+    }
+
+    /**
+     * Mission 17 — (2) l'Upload se termine par expiration de sa fenêtre,
+     * sans atteindre le plafond. Le plafond de test est volontairement très
+     * au-dessus de ce qui peut être écrit pendant la fenêtre.
+     */
+    @Test fun `upload ends by time window without cap`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        route(100_000)
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 100_000,
+            maxUploadBytes = 500_000_000,
+            maxDurationMillis = 3_000,
+            latencyProbes = 1,
+        )
+        val result = engine(policy, paceUpload = true).run { }
+        assertEquals(PhaseEndReason.TIME_WINDOW, result.uploadEndReason)
+        assertFalse(result.cappedUpload)
+        assertTrue(result.uploadBytes > 0L)
+        // La deadline (et non le plafond) a bien arrêté l'upload : la fenêtre
+        // dure au moins le budget de phase et le volume reste loin du cap.
+        assertTrue("fenêtre upload trop courte: ${result.uploadDurationMillis}",
+            result.uploadDurationMillis >= 1_000L)
+        assertTrue("volume upload proche du cap: ${result.uploadBytes}",
+            result.uploadBytes < 250_000_000L)
+        assertNotNull(result.uploadMbps)
+    }
+
+    /**
+     * Mission 17 — (3) run complet : les deux phases finissent par leur
+     * fenêtre temporelle, aucun plafond, aucun arrêt prématuré. Le résultat
+     * peut donc être annoncé comme stabilisé.
+     */
+    @Test fun `full run ends by both time windows without cap`() = runBlocking(Dispatchers.IO) {
+        server.start()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.path ?: ""
+                return if (path.contains("garbage.php")) {
+                    MockResponse().setResponseCode(200)
+                        .setHeader("Content-Type", "application/octet-stream")
+                        .setBody(bigBody(2_000_000))
+                        .throttleBody(64L * 1_024, 100, TimeUnit.MILLISECONDS)
+                } else if (request.method == "POST") {
+                    request.body.readAll(object : okio.Sink {
+                        override fun write(source: Buffer, byteCount: Long) { source.skip(byteCount) }
+                        override fun flush() = Unit
+                        override fun close() = Unit
+                        override fun timeout() = okio.Timeout.NONE
+                    })
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                } else {
+                    MockResponse().setResponseCode(200).setBody("onspeedtest")
+                }
+            }
+        }
+        val policy = SpeedTestPolicy(
+            maxDownloadBytes = 3_000_000,
+            maxUploadBytes = 500_000_000,
+            maxDurationMillis = 6_000,
+            latencyProbes = 1,
+        )
+        val result = engine(policy, paceUpload = true).run { }
+        assertEquals(PhaseEndReason.TIME_WINDOW, result.downloadEndReason)
+        assertEquals(PhaseEndReason.TIME_WINDOW, result.uploadEndReason)
+        assertFalse(result.cappedDownload)
+        assertFalse(result.cappedUpload)
+        assertFalse(result.capped)
+        assertTrue(SpeedTestCalculator.isStabilised(result))
+        assertNotNull(result.downloadMbps)
+        assertNotNull(result.uploadMbps)
     }
 }

@@ -28,6 +28,14 @@ data class DownloadStats(
     val totalBytes: Long,
     val measuredBytes: Long,
     val windowNanos: Long,
+    /** Explicit termination cause: cap, time window, or premature EOF. */
+    val endReason: PhaseEndReason,
+)
+
+/** Measured window of an upload phase, with its explicit termination cause. */
+data class UploadStats(
+    val totalBytes: Long,
+    val endReason: PhaseEndReason,
 )
 
 /**
@@ -126,6 +134,7 @@ class LibreSpeedClient(
         val phaseStart = System.nanoTime()
         val deadlineNanos = phaseStart + maxDurationMillis * 1_000_000L
         var emptyResponses = 0
+        var prematureStop = false
         try {
             while (counted < maxBytes && System.nanoTime() < deadlineNanos && emptyResponses < 1) {
                 requireActive()
@@ -150,7 +159,10 @@ class LibreSpeedClient(
                             requireActive()
                             val wanted = minOf(buffer.size.toLong(), maxBytes - counted).toInt()
                             val read = source.read(buffer, 0, wanted)
-                            if (read == -1) break
+                            if (read == -1) {
+                                prematureStop = true
+                                break
+                            }
                             counted += read
                             requestBytes += read
                             if (counted > WARMUP_BYTES && windowStartNanos == null) {
@@ -158,7 +170,12 @@ class LibreSpeedClient(
                             }
                             onProgress(counted)
                         }
-                        if (requestBytes == 0L) emptyResponses++ else emptyResponses = 0
+                        if (requestBytes == 0L) {
+                            emptyResponses++
+                            prematureStop = true
+                        } else {
+                            emptyResponses = 0
+                        }
                     }
                 } finally {
                     release(call)
@@ -175,10 +192,20 @@ class LibreSpeedClient(
             maxOf(1L, System.nanoTime() - start)
         }
         val measured = if (counted > WARMUP_BYTES) counted - WARMUP_BYTES else counted
+        // Priority: cap > premature end > time window. A cap reached on the
+        // last block is still a cap, even if the deadline expired at the same
+        // instant; an empty/short response is never a stabilised window.
+        val endReason = when {
+            counted >= maxBytes -> PhaseEndReason.VOLUME_CAP
+            prematureStop -> PhaseEndReason.PREMATURE
+            System.nanoTime() >= deadlineNanos -> PhaseEndReason.TIME_WINDOW
+            else -> PhaseEndReason.PREMATURE
+        }
         return DownloadStats(
             totalBytes = counted,
             measuredBytes = measured,
             windowNanos = windowNanos,
+            endReason = endReason,
         )
     }
 
@@ -188,12 +215,24 @@ class LibreSpeedClient(
      * can stop at the duration boundary without a protocol mismatch.
      *
      * Returns the count of bytes really written to the application stream.
+     * Kept for callers that only need the volume; the engine uses
+     * [uploadStats] so the termination cause is measured, not inferred.
      */
     suspend fun upload(
         maxBytes: Long,
         maxDurationMillis: Long,
         onProgress: suspend (uploadedBytes: Long) -> Unit,
-    ): Long {
+    ): Long = uploadStats(maxBytes, maxDurationMillis, onProgress).totalBytes
+
+    /**
+     * Same measurement as [upload], with the explicit end cause. Every
+     * other outcome (Incomplete / Timeout / cancellation) throws instead.
+     */
+    suspend fun uploadStats(
+        maxBytes: Long,
+        maxDurationMillis: Long,
+        onProgress: suspend (uploadedBytes: Long) -> Unit,
+    ): UploadStats {
         requireActive()
         val written = AtomicLong(0)
         val random = Random(UPLOAD_SEED)
@@ -240,8 +279,13 @@ class LibreSpeedClient(
         if (total == 0L) {
             throw SpeedTestFailureException(SpeedTestFailure.Incomplete)
         }
+        val endReason = when {
+            total >= maxBytes -> PhaseEndReason.VOLUME_CAP
+            System.nanoTime() >= deadlineNanos -> PhaseEndReason.TIME_WINDOW
+            else -> PhaseEndReason.PREMATURE
+        }
         onProgress(total)
-        return total
+        return UploadStats(totalBytes = total, endReason = endReason)
     }
 
     companion object {

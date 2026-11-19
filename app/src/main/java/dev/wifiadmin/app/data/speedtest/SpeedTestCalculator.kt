@@ -58,4 +58,16 @@ object SpeedTestCalculator {
     /** True when a transfer window is too short or too small to trust. */
     fun isTooShortToTrust(bytes: Long, durationMillis: Long): Boolean =
         bytes < 0 || durationMillis < 1_000L
+
+    /**
+     * True only when both phases ended by expiring their time window, with
+     * no cap and no suspiciously short window. A premature stop, a cap, a
+     * timeout or an unknown (legacy) result is never a stabilised measure.
+     */
+    fun isStabilised(result: SpeedTestResult): Boolean =
+        result.downloadEndReason == PhaseEndReason.TIME_WINDOW &&
+            result.uploadEndReason == PhaseEndReason.TIME_WINDOW &&
+            !result.cappedDownload && !result.cappedUpload &&
+            !isTooShortToTrust(result.downloadBytes, result.downloadDurationMillis) &&
+            !isTooShortToTrust(result.uploadBytes, result.uploadDurationMillis)
 }

@@ -95,10 +95,13 @@ Ne jamais forcer `capped = false` pour masquer un plafond réel.
 
 ### Statut de validité
 
-- Mesure terminée et fenêtre ≥ 1 s : résultat valide, débit affiché sans
-  mention « plafonné » si `capped = false`.
-- Plafond atteint avant la fin de la fenêtre : « mesure limitée » avec
-  explication (valeur minimale, pas débit maximal).
+- Les deux phases terminées par `TIME_WINDOW`, fenêtre ≥ 1 s et aucun plafond :
+  résultat stabilisé, débit affiché sans mention « plafonné ».
+- Plafond atteint (`VOLUME_CAP`) : « mesure limitée » avec explication (valeur
+  minimale, pas débit maximal).
+- Réponse vide / EOF avant la deadline (`PREMATURE`) : résultat indicatif,
+  jamais « mesure stabilisée » — même si la fenêtre dépasse 1 s et que
+  `capped = false`.
 - Fenêtre trop courte (< 1 s) : avertissement « résultat indicatif » via
   `isTooShortToTrust()`.
 - Timeout : `SpeedTestFailure.Timeout`, aucune valeur fictive.
@@ -158,9 +161,25 @@ ne peut élargir le budget.
 - Latence et jitter (jitter indicatif, jamais 0 ms fictif).
 - Durée de la mesure (affichée dans le panneau méta).
 - Volume réellement consommé (réception / envoi).
-- État de validité : « Mesure stabilisée sur la fenêtre prévue » si non plafonné,
-  « Plafond atteint avant stabilisation » si plafonné, « Fenêtre de mesure trop
-  courte : résultat indicatif » si < 1 s.
+- État de validité, désormais fondé sur une cause de fin explicite par phase
+  (`PhaseEndReason`) et non sur la seule valeur de `capped` :
+  - « Mesure stabilisée sur la fenêtre prévue » uniquement si les deux phases
+    ont fini par `TIME_WINDOW`, sans plafond et avec une fenêtre ≥ 1 s
+    (`SpeedTestCalculator.isStabilised`).
+  - « Arrêt prématuré du serveur : résultat indicatif » si `PREMATURE`
+    (réponse HTTP 200 vide ou corps terminé avant la deadline). Ce libellé est
+    prioritaire sur celui du plafond si les deux cas se cumulent sur le run.
+  - « Plafond atteint avant stabilisation, valeur minimale » si `VOLUME_CAP`.
+  - « Fenêtre de mesure trop courte : résultat indicatif » si < 1 s.
+  - « Fin de mesure non qualifiée : résultat indicatif » pour les anciens
+    résultats sans cause enregistrée (`UNKNOWN`).
+
+`TIMEOUT` et `CANCELLED` font partie du même vocabulaire mais interrompent le
+run : ils donnent `SpeedTestFailure.Timeout` ou `SpeedTestState.Cancelled`,
+jamais un résultat affiché comme réussi. Priorité de classification du Download :
+plafond > arrêt prématuré > expiration de la fenêtre. Celle de l'Upload est
+mesurée dans `LibreSpeedClient.uploadStats()` (deadline atteinte ou plafond),
+jamais déduite du seul `cappedUpload`.
 
 ## 6. Tests
 
@@ -171,25 +190,52 @@ ne peut élargir le budget.
 - `LibreSpeedEngineTest` : attentes ajustées (download lit jusqu'au cap).
 - `SpeedTestReuseTest`, `SpeedTestRoutingTest` : attentes ajustées.
 
-### Scénarios couverts
+### Quatre vérifications demandées — scénarios réellement couverts
 
-1. Fin temporelle du Download sans plafond (serveur lent via `setBodyDelay`).
-2. Fin temporelle de l'Upload sans plafond.
-3. Succès complet avant la deadline globale.
-4. Plafond Download atteint (capped).
-5. Plafond Upload atteint (capped).
-6. Timeout global (watchdog).
-7. Annulation (fermeture des sockets).
-8. Fenêtre de mesure insuffisante (`isTooShortToTrust`).
-9. Aucun dépassement des octets autorisés (backstop).
-10. Deux exécutions successives sans état résiduel.
+Les quatre scénarios exigés par la revue sont couverts par des tests
+déterministes contre `MockWebServer` en boucle locale (`127.0.0.1`), avec
+classification explicite de la cause de fin :
+
+| # | Test | Mécanisme déterministe | Assertion clé |
+|---|---|---|---|
+| 1 | `LibreSpeedEngineTest.download ends by time window without cap` | `garbage.php` débité à 64 Kio/100 ms (`throttleBody`) ; 2 Mio servis, plafond de test 3 Mio, budget Download ~2,2 s | `downloadEndReason == TIME_WINDOW`, `cappedDownload == false`, octets > 256 Kio et < 3 Mio, fenêtre ≥ 1 s |
+| 2 | `LibreSpeedEngineTest.upload ends by time window without cap` | plafond de test 500 Mio + intercepteur **uniquement dans le test** qui cadence les écritures à ~8 Mio/s (1 ms par chunk Okio) : fin déterministe par la deadline, même sur un CI rapide (~385 Mio/s sinon) | `uploadEndReason == TIME_WINDOW` (mesuré par le client), `cappedUpload == false`, fenêtre ≥ 1 s, volume < 250 Mio |
+| 3 | `LibreSpeedEngineTest.full run ends by both time windows without cap` | Download lent + même cadencement d'upload côté test, plafonds hors d'atteinte, les deux budgets expirent | les deux raisons `TIME_WINDOW`, `capped` / `cappedDownload` / `cappedUpload` tous `false`, `isStabilised == true` |
+| 4 | `LibreSpeedEngineTest.partial download then empty response is premature` | 1re réponse `garbage.php` = 100 000 octets, 2e = HTTP 200 vide (arrêt sans boucle rapide) | `downloadBytes == 100_000`, `cappedDownload == false`, `downloadEndReason == PREMATURE`, `isStabilised == false` |
+
+Le cadencement d'upload est appliqué par un intercepteur local au test
+(`PacedSink`) : aucune limite de débit n'a été ajoutée au client de production
+et les plafonds de la `SpeedTestPolicy` restent 20 Mio / 10 Mio / 30 s.
+
+Le test initialement nommé `download completes by time without cap` a été
+renommé : il ne mesurait pas une expiration temporelle mais une réponse vide.
+Le scénario de fin temporelle est désormais le test #1 ci-dessus, qui ne
+renvoie jamais de réponse vide.
+
+Des tests purs complètent la garde-fou d'affichage dans
+`SpeedTestCalculatorTest` :
+`both time windows are stabilised`, `premature phase is never stabilised`,
+`capped or unknown or short phase is never stabilised`. Un arrêt `PREMATURE`,
+un plafond, une cause `UNKNOWN` ou une fenêtre < 1 s ne peuvent pas produire
+« Mesure stabilisée ».
+
+### Autres scénarios déjà couverts
+
+Plafond Download/Upload atteint (`capped`), timeout de latence
+(`latency deadline exceeded throws timeout`), annulation avec fermeture du
+socket (`cancel closes the in-flight call`), HTTP 200 entièrement vide →
+`Incomplete`, erreur HTTP 503 → `ServerUnavailable`, budget debug réduit,
+consommation maximale (backstop), réutilisation sans état résiduel, routage
+Wi-Fi et métrique de présentation.
 
 ### Résultats des tests automatisés
 
-- `./gradlew testDebugUnitTest --offline --rerun-tasks` : **467 tests, 0 échec**.
-- `./gradlew assembleDebug compileReleaseKotlin --offline --rerun-tasks` : **BUILD SUCCESSFUL**.
-- Les tests JVM ne lancent aucun benchmark réel ni ne dépendent du serveur
-  LibreSpeed sur Ubuntu.
+- `./gradlew testDebugUnitTest --offline --rerun-tasks` : **477 tests, 0 échec,
+  0 erreur, 0 ignoré** (53 classes de test).
+- `./gradlew assembleDebug compileReleaseKotlin --offline --rerun-tasks` :
+  **BUILD SUCCESSFUL**.
+- Les tests JVM ne lancent aucun benchmark réel, n'ouvrent aucun port LAN et ne
+  dépendent pas du serveur LibreSpeed sur Ubuntu.
 
 ## 7. Risques résiduels
 
@@ -207,6 +253,15 @@ ne peut élargir le budget.
 6. **Caps dupliqués** : `SpeedTestPolicy` (Kotlin) et `build.gradle.kts`
    (BuildConfig) contiennent des littéraux de production. Un commentaire croisé
    le signale. Risque latent si les defaults divergent.
+7. **EOF sur corps court** : un serveur qui renvoie systématiquement des corps
+   plus petits que `ckSize` est classé `PREMATURE`, même si la fenêtre a expiré
+   ensuite. Choix volontairement conservateur : jamais de « mesure stabilisée »
+   à tort, mais possible sous-estimation sur un serveur LibreSpeed atypique.
+   À réévaluer seulement avec un benchmark réel autorisé.
+8. **Anciens résultats** : les entrées d'historique sans cause de fin
+   (`UNKNOWN`) et le moteur simulé affichent « Fin de mesure non qualifiée »
+   au lieu de « Mesure stabilisée ». Valeur par défaut sûre, effet purement
+   d'affichage.
 
 ## 8. Livrables
 

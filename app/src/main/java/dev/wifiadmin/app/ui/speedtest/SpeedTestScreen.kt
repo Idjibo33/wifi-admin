@@ -55,6 +55,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.wifiadmin.app.data.speedtest.PhaseEndReason
 import dev.wifiadmin.app.data.speedtest.SpeedTestBudget
 import dev.wifiadmin.app.data.speedtest.SpeedTestFailure
 import dev.wifiadmin.app.data.speedtest.SpeedTestResult
@@ -384,7 +385,14 @@ fun SpeedTestContent(
                             label = "Durée de la mesure",
                             value = "${result.durationMillis} ms",
                         )
-                        if (result.cappedDownload || result.cappedUpload) {
+                        if (result.downloadEndReason == PhaseEndReason.PREMATURE ||
+                            result.uploadEndReason == PhaseEndReason.PREMATURE) {
+                            Text(
+                                text = "Arrêt prématuré du serveur : résultat indicatif.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (result.cappedDownload || result.cappedUpload) {
                             val parts = mutableListOf<String>()
                             if (result.cappedDownload) parts.add("Download")
                             if (result.cappedUpload) parts.add("Upload")
@@ -400,9 +408,15 @@ fun SpeedTestContent(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        } else {
+                        } else if (SpeedTestCalculator.isStabilised(result)) {
                             Text(
                                 text = "Mesure stabilisée sur la fenêtre prévue.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text(
+                                text = "Fin de mesure non qualifiée : résultat indicatif.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

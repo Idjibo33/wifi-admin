@@ -174,7 +174,7 @@ class LibreSpeedEngine(
             ),
         )
         val ulStart = System.nanoTime()
-        val uploadBytes = client.upload(policy.maxUploadBytes, uploadBudgetMillis) { counted ->
+        val uploadStats = client.uploadStats(policy.maxUploadBytes, uploadBudgetMillis) { counted ->
             onProgress(
                 SpeedTestState.Running(
                     SpeedTestPhase.UPLOAD,
@@ -184,6 +184,7 @@ class LibreSpeedEngine(
                 ),
             )
         }
+        val uploadBytes = uploadStats.totalBytes
         val ulMillis = maxOf(1L, (System.nanoTime() - ulStart) / 1_000_000L)
         val uploadMbps = SpeedTestCalculator.mbps(uploadBytes, ulMillis)
 
@@ -202,6 +203,8 @@ class LibreSpeedEngine(
             cappedUpload = cappedUpload,
             downloadDurationMillis = stats.windowNanos / 1_000_000L,
             uploadDurationMillis = ulMillis,
+            downloadEndReason = stats.endReason,
+            uploadEndReason = uploadStats.endReason,
             providerLabel = providerLabel,
             networkKey = "",
             wifiLink = null,
