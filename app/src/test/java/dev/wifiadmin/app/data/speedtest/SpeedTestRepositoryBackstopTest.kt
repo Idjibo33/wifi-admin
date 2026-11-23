@@ -41,7 +41,10 @@ class SpeedTestRepositoryBackstopTest {
         override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
             onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = 99_000_000))
             return SpeedTestResult(
-                1.0, 1.0, 1L, 99_000_000, 0, 1_000, false, "over-cap", "k", null, 1L,
+                downloadMbps = 1.0, uploadMbps = 1.0, latencyMillis = 1L,
+                downloadBytes = 99_000_000, uploadBytes = 0, durationMillis = 1_000,
+                capped = false, providerLabel = "over-cap", networkKey = "k",
+                wifiLink = null, capturedAtWallMillis = 1L,
             )
         }
         override fun cancel() = Unit
@@ -68,7 +71,12 @@ class SpeedTestRepositoryBackstopTest {
             override val providerLabel = "ok"
             override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
                 onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = 10))
-                return SpeedTestResult(1.0, 1.0, 1L, 10L, 10L, 1_000, false, "ok", "k", null, 1L)
+                return SpeedTestResult(
+                    downloadMbps = 1.0, uploadMbps = 1.0, latencyMillis = 1L,
+                    downloadBytes = 10L, uploadBytes = 10L, durationMillis = 1_000,
+                    capped = false, providerLabel = "ok", networkKey = "k",
+                    wifiLink = null, capturedAtWallMillis = 1L,
+                )
             }
             override fun cancel() = Unit
         }
@@ -90,7 +98,12 @@ class SpeedTestRepositoryBackstopTest {
             override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
                 // No progress at all, but the terminal result claims
                 // bytes beyond the caps: still failed, never published.
-                return SpeedTestResult(1.0, 1.0, 1L, 99_000_000L, 0L, 1_000, false, "silent-overcap", "k", null, 1L)
+                return SpeedTestResult(
+                    downloadMbps = 1.0, uploadMbps = 1.0, latencyMillis = 1L,
+                    downloadBytes = 99_000_000L, uploadBytes = 0L, durationMillis = 1_000,
+                    capped = false, providerLabel = "silent-overcap", networkKey = "k",
+                    wifiLink = null, capturedAtWallMillis = 1L,
+                )
             }
             override fun cancel() = Unit
         }
@@ -126,8 +139,10 @@ class SpeedTestRepositoryBackstopTest {
             override suspend fun run(onProgress: suspend (SpeedTestState.Running) -> Unit): SpeedTestResult {
                 onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = 1_500_000L))
                 return SpeedTestResult(
-                    1.0, 1.0, 1L, 1_500_000L, 0L, 1_000, false,
-                    "reduced-overcap", "k", null, 1L,
+                    downloadMbps = 1.0, uploadMbps = 1.0, latencyMillis = 1L,
+                    downloadBytes = 1_500_000L, uploadBytes = 0L, durationMillis = 1_000,
+                    capped = false, providerLabel = "reduced-overcap", networkKey = "k",
+                    wifiLink = null, capturedAtWallMillis = 1L,
                 )
             }
             override fun cancel() = Unit

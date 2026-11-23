@@ -4,10 +4,14 @@ import dev.wifiadmin.app.data.AppClock
 import dev.wifiadmin.app.data.SystemAppClock
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 /**
@@ -102,19 +106,57 @@ class LibreSpeedEngine(
     ): SpeedTestResult {
         val startNanos = System.nanoTime()
 
+        // Per-phase time budgets: the global maxDurationMillis is the
+        // safety ceiling, not the budget of each phase. Latency gets a
+        // small slice, the remainder is split equally between download
+        // and upload, with a 10 % margin for connection setup and
+        // cleanup. The watchdog (repository) still kills at
+        // maxDurationMillis if a phase overruns.
+        val latencyBudgetMillis = (policy.latencyProbes * 1_000L).coerceAtMost(policy.maxDurationMillis / 5)
+        val marginMillis = policy.maxDurationMillis / 10
+        val remainingMillis = (policy.maxDurationMillis - latencyBudgetMillis - marginMillis).coerceAtLeast(1_000L)
+        val downloadBudgetMillis = remainingMillis / 2
+        val uploadBudgetMillis = remainingMillis / 2
+
         // Latency: median of the probes (never min, never max).
+        // A per-phase watchdog cancels the in-flight call if the
+        // latency budget is exceeded, so a blocking ping cannot
+        // consume the download/upload budgets.
         onProgress(SpeedTestState.Running(SpeedTestPhase.LATENCY))
         val probes = mutableListOf<Long>()
-        repeat(policy.latencyProbes) {
-            currentCoroutineContext().ensureActive()
-            probes.add(client.pingMillis())
+        val latencyStart = System.nanoTime()
+        val latencyDeadlineNanos = latencyStart + latencyBudgetMillis * 1_000_000L
+        val latencyTimedOut = AtomicBoolean(false)
+        coroutineScope {
+            val watchdog = launch {
+                delay(latencyBudgetMillis)
+                latencyTimedOut.set(true)
+                runCatching { client.cancel() }
+            }
+            try {
+                repeat(policy.latencyProbes) {
+                    if (System.nanoTime() >= latencyDeadlineNanos && probes.isNotEmpty()) return@repeat
+                    currentCoroutineContext().ensureActive()
+                    try {
+                        probes.add(client.pingMillis())
+                    } catch (e: IOException) {
+                        if (latencyTimedOut.get()) throw SpeedTestFailureException(SpeedTestFailure.Timeout)
+                        throw SpeedTestFailureException(SpeedTestFailure.ServerUnavailable)
+                    }
+                }
+            } finally {
+                watchdog.cancel()
+            }
+        }
+        if (probes.isEmpty()) {
+            throw SpeedTestFailureException(SpeedTestFailure.Timeout)
         }
         val latency = SpeedTestCalculator.medianLatencyMillis(probes)
         val jitter = SpeedTestCalculator.jitterMillis(probes)
 
         // Download, measured over its own stabilised window.
         onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD))
-        val stats = client.download(policy.maxDownloadBytes) { counted ->
+        val stats = client.download(policy.maxDownloadBytes, downloadBudgetMillis) { counted ->
             onProgress(SpeedTestState.Running(SpeedTestPhase.DOWNLOAD, downloadBytes = counted))
         }
         val downloadBytes = stats.totalBytes
@@ -132,7 +174,7 @@ class LibreSpeedEngine(
             ),
         )
         val ulStart = System.nanoTime()
-        val uploadBytes = client.upload(policy.maxUploadBytes) { counted ->
+        val uploadStats = client.uploadStats(policy.maxUploadBytes, uploadBudgetMillis) { counted ->
             onProgress(
                 SpeedTestState.Running(
                     SpeedTestPhase.UPLOAD,
@@ -142,10 +184,13 @@ class LibreSpeedEngine(
                 ),
             )
         }
+        val uploadBytes = uploadStats.totalBytes
         val ulMillis = maxOf(1L, (System.nanoTime() - ulStart) / 1_000_000L)
         val uploadMbps = SpeedTestCalculator.mbps(uploadBytes, ulMillis)
 
         val durationMillis = maxOf(1L, (System.nanoTime() - startNanos) / 1_000_000L)
+        val cappedDownload = downloadBytes >= policy.maxDownloadBytes
+        val cappedUpload = uploadBytes >= policy.maxUploadBytes
         return SpeedTestResult(
             downloadMbps = downloadMbps,
             uploadMbps = uploadMbps,
@@ -153,7 +198,13 @@ class LibreSpeedEngine(
             downloadBytes = downloadBytes,
             uploadBytes = uploadBytes,
             durationMillis = durationMillis,
-            capped = SpeedTestCalculator.isCapped(downloadBytes, uploadBytes, policy),
+            capped = cappedDownload || cappedUpload,
+            cappedDownload = cappedDownload,
+            cappedUpload = cappedUpload,
+            downloadDurationMillis = stats.windowNanos / 1_000_000L,
+            uploadDurationMillis = ulMillis,
+            downloadEndReason = stats.endReason,
+            uploadEndReason = uploadStats.endReason,
             providerLabel = providerLabel,
             networkKey = "",
             wifiLink = null,

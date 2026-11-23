@@ -45,7 +45,7 @@ class SpeedTestRoutingTest {
     private fun engine(
         provider: WifiNetworkRouteProvider,
         policy: SpeedTestPolicy = SpeedTestPolicy(
-            maxDownloadBytes = 5_000_000,
+            maxDownloadBytes = 100_000,
             maxUploadBytes = 500_000,
             latencyProbes = 2,
         ),
